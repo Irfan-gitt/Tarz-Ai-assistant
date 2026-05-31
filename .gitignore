@@ -1,0 +1,26 @@
+
+element.png
+screen_grid.png
+screen_resized.png
+screen.png
+verify.png
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+env/
+
+# Environment variables / secrets
+.env
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
