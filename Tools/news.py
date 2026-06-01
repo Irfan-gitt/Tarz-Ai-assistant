@@ -16,7 +16,6 @@ llm = ChatGroq(
 )
 
 
-@tool
 def search_news(query: str) -> str:
     """
     Search for latest news and return summary + article links.

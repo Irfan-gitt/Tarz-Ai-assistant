@@ -58,7 +58,7 @@ REASON: <brief reason>"""
 
 def take_screenshot() -> Image.Image:
     shot = pyautogui.screenshot()
-    shot.save("screen.png")
+    shot.save("temp/screen.png")
     return shot
 
 
@@ -100,7 +100,7 @@ def draw_grid(image: Image.Image, cols: int = COLS, rows: int = ROWS) -> Image.I
             draw.text((cx, cy), label, fill=LABEL_COLOR, font=font)
 
     result = Image.alpha_composite(img, overlay).convert("RGB")
-    result.save("screen_grid.png")
+    result.save("temp/screen_grid.png")
     return result
 
 
@@ -158,7 +158,7 @@ def grid_find(target: str) -> dict:
         model="gemini-2.5-flash",
         contents=[
             _GRID_PROMPT.format(target=target),
-            Image.open("screen_grid.png")
+            Image.open("temp/screen_grid.png")
         ]
     )
 
@@ -222,6 +222,7 @@ def click(target: str) -> bool:
     return True
 
 
+"""
 # ── Usage ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     result = grid_find("play button")
@@ -229,3 +230,4 @@ if __name__ == "__main__":
 
     # click("search button")
     click("play button")
+"""
