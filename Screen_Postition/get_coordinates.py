@@ -1,7 +1,7 @@
 import pyautogui
 import easyocr
 from dotenv import load_dotenv
-from grid_finder import click as grid_click
+from Screen_Postition.grid_finder import click as grid_click
 
 load_dotenv()
 
@@ -15,12 +15,12 @@ except Exception:
 
 
 def take_screenshot():
-    pyautogui.screenshot().save("screen.png")
+    pyautogui.screenshot().save("temp/screen.png")
 
 
 def easyocr_find(target):
     try:
-        results = reader.readtext("screen.png")
+        results = reader.readtext("temp/screen.png")
         best = None
         best_conf = 0
 
@@ -61,7 +61,3 @@ def find_on_screen(target):
 
     print(f"'{target}' not found on screen")
     return {"found": False}
-
-
-ff = find_on_screen("play button")
-print(ff)

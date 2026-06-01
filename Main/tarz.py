@@ -1,25 +1,24 @@
-from langchain_cerebras import ChatCerebras
-from langchain_openai import ChatOpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI
-import re
-import os
-from duckduckgo_search import DDGS
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
-import webbrowser
-import subprocess
-import pyautogui
-from PIL import Image
-import time
-from groq import Groq
 
-import base64
+import sys  # noqa
+import os  # noqa
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
+import time
+import os
+from PIL import Image
 from openai import OpenAI
-from prompt import SYSTEM_PROMPT
-from get_coordinates import find_on_screen
-from vision import describe_screen
+from groq import Groq
+from dotenv import load_dotenv
+from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
+from langchain_cerebras import ChatCerebras
+
+
+from Prompts.prompt import SYSTEM_PROMPT
+from Screen_Postition.get_coordinates import find_on_screen
+from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from execute_action import click, type_text, press_key, open_app, read_screen, volume_control, news_update, use_shortcut, wait, done
+from Actions.execute_action import click, type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, wait, done
 
 
 load_dotenv()
@@ -29,10 +28,9 @@ api_or = os.getenv("OPENROUTER_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
 TOOLS = [click, type_text, press_key, open_app,
-         read_screen, news_update, volume_control, use_shortcut, wait, done]
+         read_screen, news_update, wether_app, volume_control, use_shortcut, wait, done]
 
 
-# Replace Gemini with Cerebras
 llm_tools = ChatCerebras(
     model="gpt-oss-120b",
     api_key=api_cb,
@@ -133,6 +131,7 @@ def think(user_input):
             print(f"[Step {step+1}] {name}({args})")
 
             tool_fn = next((t for t in TOOLS if t.name == name), None)
+
             if tool_fn:
                 result = tool_fn.invoke(args)
             else:
