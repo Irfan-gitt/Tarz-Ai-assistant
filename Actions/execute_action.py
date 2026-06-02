@@ -1,3 +1,6 @@
+
+import pyperclip
+from Tools.translator import run_translate
 import os
 from duckduckgo_search import DDGS
 from langchain_groq import ChatGroq
@@ -15,7 +18,8 @@ from langchain_core.tools import tool
 from Tools.news import search_news
 from Actions.app_shortcut import volume_down, volume_up, mute, SHORTCUTS
 from Tools. weather import get_weather
-
+from Tools.timer_alarm import run_timer, run_alarm
+from Tools.memory import save_preference, retrieve_similar_task
 load_dotenv()
 
 api_key = os.getenv("groq_api")
@@ -55,10 +59,50 @@ def type_text(text: str) -> str:
 
 
 @tool
+def remember(key: str, value: str) -> str:
+    """
+    Save something to memory.
+    Use when user says 'remember that...' or shares preferences.
+
+    Examples:
+    remember(key='favourite_song', value='Sailor Song by Gigi Perez')
+    remember(key='name', value='Irfan')
+    remember(key='city', value='Trivandrum')
+    """
+    save_preference(key, value)
+    return f"Remembered: {key} = {value}"
+
+
+@tool
 def press_key(key: str) -> str:
     """Press a keyboard key. Examples: enter, esc, tab, space, win."""
     pyautogui.press(key)
     return f"Pressed: {key}"
+
+
+@tool
+def clipboard(action: str, text: str = "") -> str:
+    """
+    Control clipboard. 
+    action: 'copy' to copy text, 'paste' to get clipboard content
+
+    Examples:
+    clipboard(action='copy', text='Hello World')
+    clipboard(action='paste')
+    """
+    try:
+        if action == "copy":
+            pyperclip.copy(text)
+            return f"Copied: {text}"
+
+        elif action == "paste":
+            content = pyperclip.paste()
+            return f"Clipboard contains: {content}"
+
+        return "Invalid action. Use 'copy' or 'paste'"
+
+    except Exception as e:
+        return f"Clipboard error: {e}"
 
 
 @tool
@@ -69,7 +113,7 @@ def open_app(app_name: str) -> str:
     pyautogui.write(app_name, interval=0.05)
     time.sleep(1)
     pyautogui.press("enter")
-    time.sleep(1)
+    time.sleep(7)
     return f"Opened {app_name}"
 
 
@@ -87,9 +131,27 @@ def news_update(question: str) -> str:
 
 
 @tool
+def translate(text: str, target_lang: str, source_lang: str = "auto") -> str:
+    """Translate text to any language. e.g. translate('hello', 'spanish')"""
+    return run_translate(text, target_lang, source_lang)
+
+
+@tool
 def wether_app(city: str) -> str:
     """To find weather details and condition in specific city's, Such as how is the weather today in x city"""
     return get_weather(city)
+
+
+@tool
+def set_timer(seconds: int = 0, minutes: int = 0, label: str = "Timer") -> str:
+    """Set a countdown timer in minutes or seconds."""
+    return run_timer(seconds, minutes, label)
+
+
+@tool
+def set_alarm(alarm_time: str, label: str = "Alarm") -> str:
+    """Set an alarm at a specific time. Format HH:MM e.g. 07:30"""
+    return run_alarm(alarm_time, label)
 
 
 @tool

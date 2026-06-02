@@ -1,4 +1,3 @@
-
 import sys  # noqa
 import os  # noqa
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
@@ -18,7 +17,8 @@ from Prompts.prompt import SYSTEM_PROMPT
 from Screen_Postition.get_coordinates import find_on_screen
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from Actions.execute_action import click, type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, wait, done
+from Tools.memory import save_task, retrieve_similar_task, get_all_preferences
+from Actions.execute_action import click, type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, wait, done
 
 
 load_dotenv()
@@ -28,7 +28,7 @@ api_or = os.getenv("OPENROUTER_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
 TOOLS = [click, type_text, press_key, open_app,
-         read_screen, news_update, wether_app, volume_control, use_shortcut, wait, done]
+         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, set_timer, translate, clipboard, remember, wait, done]
 
 
 llm_tools = ChatCerebras(
@@ -98,8 +98,29 @@ Be generous with YES - when in doubt say YES."""),
 
 def think(user_input):
 
+    past = retrieve_similar_task(user_input)
+
+    if past and past["success"] == "True":
+        memory_hint = f"\nPast similar task found: '{past['task']}'\nSteps used: {past['steps']}\nUse as reference if relevant.\n"
+        print(f"[Memory] Found similar: {past['task']}")
+    else:
+        memory_hint = ""
+
+    # 2. Get user preferences
+    prefs = get_all_preferences()
+    prefs_text = "\n".join(
+        [f"- {k}: {v}" for k, v in prefs.items()]) if prefs else "None"
+
+    # 3. Build system prompt with memory
+    SYSTEM_WITH_MEMORY = SYSTEM + f"""
+    
+User Preferences:
+{prefs_text}
+
+{memory_hint}"""
+
     messages = [
-        SystemMessage(content=SYSTEM),
+        SystemMessage(content=SYSTEM_WITH_MEMORY),
         HumanMessage(content=user_input)
     ]
     if not is_computer_task(user_input):
@@ -124,11 +145,12 @@ def think(user_input):
         if not response.tool_calls:
             return response.content
 
+        completed_steps = []
         for tool_call in response.tool_calls:
             name = tool_call["name"]
             args = tool_call["args"]
 
-            print(f"[Step {step+1}] {name}({args})")
+            completed_steps.append(f"{name}({args})")
 
             tool_fn = next((t for t in TOOLS if t.name == name), None)
 
@@ -140,6 +162,12 @@ def think(user_input):
             print(f" -> {result}")
 
             if name == "done":
+                # Save to memory!
+                save_task(
+                    user_input=user_input,
+                    steps=completed_steps,
+                    success=True
+                )
                 return args.get("summary", result)
 
             messages.append(ToolMessage(content=str(result),
