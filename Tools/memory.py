@@ -17,6 +17,60 @@ preferences_collection = client.get_or_create_collection(
     metadata={"hnsw:space": "cosine"}
 )
 
+conversation_collection = client.get_or_create_collection(
+    name="tarz_conversations",
+    metadata={"hnsw:space": "cosine"}
+)
+
+
+def get_recent_tasks(n=5) -> list:
+    """Get recently completed tasks"""
+    try:
+        results = tasks_collection.get()
+        if not results["metadatas"]:
+            return []
+
+        items = list(zip(results["documents"], results["metadatas"]))
+        items.sort(key=lambda x: x[1]["timestamp"])
+        recent = items[-n:]
+
+        return [{
+            "task": doc,
+            "steps": meta["steps"],
+            "success": meta["success"]
+        } for doc, meta in recent]
+    except:
+        return []
+
+
+def save_conversation(user_msg: str, tarz_msg: str):
+    """Save conversation exchange"""
+    conv_id = f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    conversation_collection.add(
+        documents=[f"User: {user_msg} | TARZ: {tarz_msg}"],
+        metadatas=[{
+            "user": user_msg,
+            "tarz": tarz_msg,
+            "timestamp": datetime.now().isoformat()
+        }],
+        ids=[conv_id]
+    )
+
+
+def get_recent_conversations(n=10) -> list:
+    """Get recent conversations"""
+    try:
+        results = conversation_collection.get()
+        # Sort by timestamp, get last n
+        items = list(zip(
+            results["metadatas"],
+            results["documents"]
+        ))
+        items.sort(key=lambda x: x[0]["timestamp"])
+        return items[-n:]
+    except:
+        return []
+
 
 def save_task(user_input: str, steps: list, success: bool = True):
     """Save a completed task to memory"""
