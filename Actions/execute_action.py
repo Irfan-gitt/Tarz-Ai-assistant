@@ -1,4 +1,5 @@
 
+from Tools.rag import save_preference, save_task
 import pyperclip
 from Tools.translator import run_translate
 import os
@@ -56,6 +57,19 @@ def type_text(text: str) -> str:
     """Type text into the currently focused input field."""
     pyautogui.write(text, interval=0.05)
     return f"Typed: {text}"
+
+
+@tool
+def correct_memory(key: str, correct_value: str) -> str:
+    """
+    Correct or update something in memory.
+    Use when user says 'that's wrong', 'actually it's', 'correct that to'.
+    Examples:
+    correct_memory(key='name', correct_value='Irfan')
+    correct_memory(key='favourite_song', correct_value='Sailor Song')
+    """
+    save_preference(key, correct_value)
+    return f"Corrected: {key} = {correct_value}"
 
 
 @tool
