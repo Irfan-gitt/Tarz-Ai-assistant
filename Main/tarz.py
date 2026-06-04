@@ -18,9 +18,13 @@ from Screen_Postition.get_coordinates import find_on_screen
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Tools.memory import save_task, retrieve_similar_task, get_all_preferences, save_conversation, get_recent_conversations
-from Actions.execute_action import click, type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, wait, done
+from Actions.execute_action import click, type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, correct_memory, wait, done
 from Tools.memory import get_recent_tasks
-
+from Tools.rag import (
+    save_task, retrieve_similar_task,
+    save_conversation, retrieve_similar_chats,
+    get_recent_tasks, get_all_preferences
+)
 load_dotenv()
 
 api_key = os.getenv("groq_api")
@@ -28,7 +32,7 @@ api_or = os.getenv("OPENROUTER_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
 TOOLS = [click, type_text, press_key, open_app,
-         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, set_timer, translate, clipboard, remember, wait, done]
+         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, set_timer, translate, correct_memory, clipboard, remember, wait, done]
 
 
 llm_tools = ChatCerebras(
@@ -48,6 +52,14 @@ You are TARZ, an AI that controls a Windows computer.
 Use the provided tools to complete the user's goal step by step.
 Call done() only when the task is confirmed complete.
 Always open_app() first if an app needs to be launched, then wait(5).
+
+
+Memory rules:
+- If user says "that's wrong", "actually", "no it's", "correct that" → use correct_memory()
+- If user shares personal info like name, preference, favourite thing → use remember()
+- Always check User Preferences before answering personal questions
+- If user says "remember that I..." → use remember()
+
 
 Spotify search flow — always follow this exact order:
 1. open_app("spotify")
@@ -104,50 +116,48 @@ conversation_history = [
 
 def think(user_input):
 
-    past = retrieve_similar_task(user_input)
-
+    similar_tasks = retrieve_similar_task(user_input, n=3)
+    similar_chats = retrieve_similar_chats(user_input, n=5)
     recent_tasks = get_recent_tasks(5)
-    tasks_text = "\n".join([f"- {t['task']} (steps: {t['steps']})"
-                            for t in recent_tasks]) if recent_tasks else "None"
-    if past and past["success"] == "True":
-        memory_hint = f"""
-    IMPORTANT - Similar task found in memory:
-    Task: '{past['task']}'
-    Steps that worked: {past['steps']}
-    Follow these exact steps for this task.
-    """
-    else:
-        memory_hint = ""
-
-    # 2. Get user preferences
     prefs = get_all_preferences()
-    prefs_text = "\n".join(
-        [f"- {k}: {v}" for k, v in prefs.items()]) if prefs else "None"
 
-    # 3. Build system prompt with memory
+    # Build memory context
+    tasks_text = "\n".join([
+        f"- '{t['task']}' → {t['steps']}"
+        for t in recent_tasks
+    ]) if recent_tasks else "None"
+
+    similar_text = "\n".join([
+        f"- '{t['task']}' → steps: {t['steps']}"
+        for t in similar_tasks if t["success"] == "True"
+    ]) if similar_tasks else "None"
+
+    prefs_text = "\n".join([
+        f"- {k}: {v}" for k, v in prefs.items()
+    ]) if prefs else "None"
+
     SYSTEM_WITH_MEMORY = SYSTEM + f"""
     
 User Preferences:
 {prefs_text}
 
 Recent Tasks:
-{tasks_text}        
+{tasks_text}
 
-
-{memory_hint}"""
-
+Semantically Similar Past Tasks (use as reference):
+{similar_text}
+"""
     messages = [
         SystemMessage(content=SYSTEM_WITH_MEMORY),
         HumanMessage(content=user_input)
     ]
     if not is_computer_task(user_input):
-        # Get recent tasks for context
+
         recent_tasks = get_recent_tasks(10)
         tasks_text = "\n".join([
             f"- {t['task']}" for t in recent_tasks
         ]) if recent_tasks else "None"
 
-        # Inject into conversation history system message
         conversation_history[0] = SystemMessage(content=SYSTEM_PROMPT + f"""
 
 Tasks you have completed for this user:
@@ -164,6 +174,7 @@ Use this when user asks what you did, what tasks were completed, or you can use 
         return response
     print("[Router] Task detected → tool LLM")
     completed_steps = []
+    last_result = ""
 
     for step in range(15):
         try:
@@ -177,15 +188,10 @@ Use this when user asks what you did, what tasks were completed, or you can use 
 
         messages.append(response)
 
-        # No tool calls → LLM gave text response
         if not response.tool_calls:
-            # Save task if tools were actually used
             if completed_steps:
-                save_task(
-                    user_input=user_input,
-                    steps=completed_steps,
-                    success=True
-                )
+                save_task(user_input=user_input,
+                          steps=completed_steps, success=True)
                 print(f"[Memory] Auto-saved: {user_input}")
             return response.content
 
@@ -197,6 +203,7 @@ Use this when user asks what you did, what tasks were completed, or you can use 
             tool_fn = next((t for t in TOOLS if t.name == name), None)
             result = tool_fn.invoke(
                 args) if tool_fn else f"Unknown tool: {name}"
+            last_result = result
 
             print(f" -> {result}")
 
@@ -209,10 +216,10 @@ Use this when user asks what you did, what tasks were completed, or you can use 
             messages.append(ToolMessage(content=str(result),
                             tool_call_id=tool_call["id"]))
             time.sleep(0.5)
-            last_result = completed_steps[-1] if completed_steps else "Task completed"
-            save_task(user_input=user_input,
-                      steps=completed_steps, success=False)
-            return last_result
+
+    # Only reaches here if 15 steps used without done()
+    save_task(user_input=user_input, steps=completed_steps, success=True)
+    return last_result if last_result else "Max steps reached"
 
 
 def main():
