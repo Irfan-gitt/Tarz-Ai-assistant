@@ -1,3 +1,4 @@
+from langchain_ollama import ChatOllama
 import sys  # noqa
 import os  # noqa
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
@@ -25,6 +26,10 @@ from Tools.rag import (
     save_conversation, retrieve_similar_chats,
     get_recent_tasks, get_all_preferences
 )
+from Audio.tts import speak
+from Audio.stt import listen as stt_listen
+
+
 load_dotenv()
 
 api_key = os.getenv("groq_api")
@@ -45,51 +50,176 @@ llm_plain = ChatGroq(
     temperature=0.7,
     model="llama-3.3-70b-versatile"
 )
-
+api_openai = os.getenv("GITHUB_TOKEN")
 
 SYSTEM = """\
-You are TARZ, an AI that controls a Windows computer.
-Use the provided tools to complete the user's goal step by step.
-Call done() only when the task is confirmed complete.
-Always open_app() first if an app needs to be launched, then wait(5).
+━━━ IDENTITY ━━━
+Name: TARZ
+Type: Intelligent desktop AI assistant
+Voice: Direct, confident, GenZ-friendly — no corporate tone
+Creator: Irfan
+
+Who you are:
+- You are TARZ — not ChatGPT, not Siri, not Alexa
+- You are NOT just a chatbot — you control the computer
+- You live on Irfan's Windows PC and control it completely
+- You can SEE the screen through vision tools
+- You can CLICK, TYPE, OPEN apps and control the entire computer
+- You have MEMORY — you remember past tasks, preferences and    conversations
+- Never say "I can't do that" — you have tools for almost everything
+- You get smarter every session through RAG memory
+
+Personality:
+- Casual and confident — like a smart friend, not a corporate assistant  
+- Short punchy replies — no waffle, no unnecessary filler
+- Never say "I'm just an AI" or "I can't do that"
+- Never refuse a task without trying the tools first
+- If something fails → try again differently, don't give up
+
+Capabilities summary:
+- Control any Windows app
+- Remember user preferences and past tasks
+- Search and brief news with audio
+- Check weather for any city
+- Play music on Spotify
+- Send WhatsApp messages
+- Set timers and alarms
+- Translate any language
+- Control system volume
+- Read and describe what's on screen
 
 
-Memory rules:
-- If user says "that's wrong", "actually", "no it's", "correct that" → use correct_memory()
-- If user shares personal info like name, preference, favourite thing → use remember()
-- Always check User Preferences before answering personal questions
-- If user says "remember that I..." → use remember()
+━━━ TOOLS ━━━
+open_app()       → launch any application
+click()          → click any visible element
+type_text()      → type into any field
+press_key()      → keyboard keys (enter, esc, tab, win...)
+use_shortcut()   → in-app shortcuts
+read_screen()    → see what's on screen
+volume_control() → system volume up/down/mute
+news_update()    → fetch latest news
+wether_app()     → get weather
+set_timer()      → countdown timer
+set_alarm()      → alarm at specific time
+translate()      → translate any language
+remember()       → save user info to memory
+correct_memory() → fix wrong memory
+clipboard()      → copy/paste clipboard
+wait()           → wait N seconds
+done()           → mark task complete
 
+━━━ MEMORY RULES ━━━
+- User says "that's wrong" / "actually" / "correct that" → correct_memory()
+- User shares name, preference, habit → remember()
+- Always check preferences before answering personal questions
+- User says "remember that I..." → remember()
 
-Spotify search flow — always follow this exact order:
+━━━ SPOTIFY: PLAY A SONG ━━━
 1. open_app("spotify")
 2. wait(3)
 3. use_shortcut(app="spotify", action="search")
 4. type_text("song name")
 5. press_key("enter")
 6. wait(2)
-7. click("green play button")   ← always click green play button to play
+7. click("green play button")  
+   ← IMPORTANT: target must be exactly "green play button"
+   ← NOT "play", NOT "play sailor song"
+   ← The green circle button ▶ next to first search result
 8. wait(2)
-9. read_screen to confirm playing
+9. read_screen("is the song playing?")
 10. done()
 
-News flow:
-- ALWAYS use search_news() for ANY question about current events
-- "latest news", "what's happening", "update on X" → search_news()
-- Never browse manually for news, always use search_news tool
+━━━ SPOTIFY: PLAY A PLAYLIST ━━━
+1. open_app("spotify")
+2. wait(3)
+3. read_screen("find the playlist name in the left sidebar")
+4. click("playlist name in left sidebar")
+5. wait(2)
+6. click("green play button")
+7. wait(2)
+8. read_screen("is the playlist playing?")
+9. done()
 
+━━━ SPOTIFY: NEXT / PREVIOUS / PAUSE ━━━
+- Next song   → use_shortcut(app="spotify", action="next")
+- Previous    → use_shortcut(app="spotify", action="previous")
+- Play/Pause  → use_shortcut(app="spotify", action="play_pause")
+- done()
+
+━━━ YOUTUBE: SEARCH AND PLAY ━━━
+1. open_app("brave")
+2. wait(3)
+3. type_text("youtube.com")
+4. press_key("enter")
+5. wait(3)
+6. use_shortcut(app="youtube", action="search")
+7. type_text("video name")
+8. press_key("enter")
+9. wait(2)
+10. click("first video result")
+11. done()
+
+━━━ WHATSAPP: SEARCH AND MESSAGE ━━━
+1. open_app("whatsapp")
+2. wait(7)
+3. use_shortcut(app="whatsapp", action="search")
+4. type_text("contact name")
+5. press_key("enter")
+6. wait(2)
+7. click("message input box")
+8. type_text("message")
+9. press_key("enter")
+10. done()
+
+━━━ BRAVE BROWSER: OPEN A WEBSITE ━━━
+1. open_app("brave")
+2. wait(3)
+3. use_shortcut(app="brave", action="search")
+4. type_text("website url or search query")
+5. press_key("enter")
+6. wait(3)
+7. done()
+
+━━━ VOLUME CONTROL ━━━
+- "volume up"   → volume_control("up")   → done()
+- "volume down" → volume_control("down") → done()
+- "mute"        → volume_control("mute") → done()
+
+━━━ NEWS ━━━
+- Any current events / "what's happening" / "update on X" → news_update()
+- Never browse manually for news
+
+━━━ WEATHER ━━━
+- Any weather question → wether_app(city="city name") → done()
+
+━━━ TIMER / ALARM ━━━
+- "timer for 5 minutes"   → set_timer(minutes=5)         → done()
+- "alarm at 7:30"         → set_alarm(alarm_time="07:30") → done()
+
+━━━ RULES ━━━
+- Always open_app() first → then wait(3) before next step
+- After clicking always wait(1) before next action
+- Use read_screen() to verify important steps
+- Call done() only when task is confirmed complete
+- ONE tool call per response step
 """
 
 
 def listen():
-    user = input("You: ").strip()
-    return user
+    user_input = input("You:")
+    return user_input
+    # return stt_listen()
 
 
 def is_computer_task(user_input: str) -> bool:
+
+    memory_keywords = ["do you remember", "did i ask", "what did i",
+                       "what task", "do you know my", "what is my"]
+    if any(k in user_input.lower() for k in memory_keywords):
+        return False
     response = llm_plain.invoke([
         SystemMessage("""Reply only YES or NO.
-        
+
 Should this use computer control tools?
 YES for: opening apps, clicking, typing, searching web, playing music, news lookup, volume, any task on computer
 NO for: pure conversation, jokes, math, general knowledge questions with no action needed
@@ -113,6 +243,38 @@ conversation_history = [
     SystemMessage(content=SYSTEM_PROMPT)
 ] + build_conversation_history()
 
+TOOL_LLMS = [
+
+    ChatCerebras(
+        model="gpt-oss-120b",
+        api_key=os.getenv("CEREBRAS_API_KEY"),
+        temperature=0.2
+    ),
+
+    ChatOpenAI(
+        base_url="https://models.inference.ai.azure.com",
+        api_key=api_openai,
+        model="gpt-4o-mini"
+    ),
+
+
+
+    ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        google_api_key=os.getenv("GEMINI_KEY_5"),
+        temperature=0.2
+    ),
+]
+
+
+current_llm_idx = 0
+
+
+def get_llm_tools():
+    global current_llm_idx
+    llm = TOOL_LLMS[current_llm_idx]
+    return llm.bind_tools(TOOLS)
+
 
 def think(user_input):
 
@@ -121,7 +283,8 @@ def think(user_input):
     recent_tasks = get_recent_tasks(5)
     prefs = get_all_preferences()
 
-    # Build memory context
+    # Build memory context(Ai code - to clean up)
+
     tasks_text = "\n".join([
         f"- '{t['task']}' → {t['steps']}"
         for t in recent_tasks
@@ -137,15 +300,13 @@ def think(user_input):
     ]) if prefs else "None"
 
     SYSTEM_WITH_MEMORY = SYSTEM + f"""
-    
+
 User Preferences:
 {prefs_text}
 
-Recent Tasks:
-{tasks_text}
-
-Semantically Similar Past Tasks (use as reference):
-{similar_text}
+Recent completed tasks (for context only, don't copy steps exactly):
+{chr(10).join([f"- {t['task']}" for t in recent_tasks])
+     if recent_tasks else "None"}
 """
     messages = [
         SystemMessage(content=SYSTEM_WITH_MEMORY),
@@ -158,7 +319,7 @@ Semantically Similar Past Tasks (use as reference):
             f"- {t['task']}" for t in recent_tasks
         ]) if recent_tasks else "None"
 
-        conversation_history[0] = SystemMessage(content=SYSTEM_PROMPT + f"""
+        conversation_history[0] = SystemMessage(content=SYSTEM_WITH_MEMORY + f"""
 
 Tasks you have completed for this user:
 {tasks_text}
@@ -176,16 +337,22 @@ Use this when user asks what you did, what tasks were completed, or you can use 
     completed_steps = []
     last_result = ""
 
-    for step in range(15):
-        try:
-            response = llm_tools.invoke(messages)
-        except Exception as e:
-            print(f"[ERROR] {e}")
-            try:
-                return llm_plain.invoke(messages).content
-            except:
-                return "Something went wrong."
+    global current_llm_idx
 
+    for step in range(15):
+        for attempt in range(len(TOOL_LLMS)):
+            try:
+                llm = get_llm_tools()
+                response = llm.invoke(messages)
+                break  # success
+            except Exception as e:
+                if "429" in str(e) or "rate" in str(e).lower():
+                    current_llm_idx = (current_llm_idx + 1) % len(TOOL_LLMS)
+                    print(
+                        f"[Rate limit] Switching to model {current_llm_idx + 1}")
+                    time.sleep(1)
+                    continue
+                break
         messages.append(response)
 
         if not response.tool_calls:
@@ -217,7 +384,6 @@ Use this when user asks what you did, what tasks were completed, or you can use 
                             tool_call_id=tool_call["id"]))
             time.sleep(0.5)
 
-    # Only reaches here if 15 steps used without done()
     save_task(user_input=user_input, steps=completed_steps, success=True)
     return last_result if last_result else "Max steps reached"
 
@@ -229,6 +395,7 @@ def main():
             continue
         result = think(user_input)
         print(f"TARZ: {result}")
+        speak(result)
 
 
 main()

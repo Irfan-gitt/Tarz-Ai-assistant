@@ -16,9 +16,23 @@ load_dotenv()
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.5
 
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# ── Grid config ────────────────────────────────────────────────────────────────
+GEMINI_KEYS = [
+    os.getenv("GEMINI_KEY_1"),
+    os.getenv("GEMINI_KEY_2"),
+    os.getenv("GEMINI_KEY_3"),
+    os.getenv("GEMINI_KEY_4"),
+    os.getenv("GEMINI_KEY_5"),
+]
+GEMINI_KEYS = [k for k in GEMINI_KEYS if k]  # remove empty
+
+current_key_idx = 0
+
+
+def get_gemini_client():
+    return genai.Client(api_key=GEMINI_KEYS[current_key_idx])
+
+
 COLS = 25
 ROWS = 18
 
@@ -132,16 +146,13 @@ def cell_to_pixels(
     cell_w = 1280 / cols
     cell_h = 720 / rows
 
-    # Cell center in 1280x720 space
     cx = col_idx * cell_w + cell_w / 2
     cy = row_idx * cell_h + cell_h / 2
 
-    # Apply sub-cell position offset
     ox, oy = POSITION_OFFSET.get(position.lower().strip(), (0.0, 0.0))
     cx += ox * cell_w
     cy += oy * cell_h
 
-    # Scale to actual screen coordinates
     px = int(cx * scale_x)
     py = int(cy * scale_y)
 
@@ -149,18 +160,36 @@ def cell_to_pixels(
 
 
 def grid_find(target: str) -> dict:
+    global current_key_idx
     print(f"\n[GridFinder] Looking for: '{target}'")
 
     image = take_screenshot()
     draw_grid(image, COLS, ROWS)
 
-    response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[
-            _GRID_PROMPT.format(target=target),
-            Image.open("temp/screen_grid.png")
-        ]
-    )
+    for attempt in range(len(GEMINI_KEYS)):
+        try:
+            client = get_gemini_client()
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    _GRID_PROMPT.format(target=target),
+                    Image.open("temp/screen_grid.png")
+                ]
+            )
+            break
+
+        except Exception as e:
+            if "429" in str(e) or "quota" in str(e).lower():
+                print(
+                    f"[GridFinder] Key {current_key_idx + 1} rate limited, switching...")
+                current_key_idx = (current_key_idx + 1) % len(GEMINI_KEYS)
+                continue
+            else:
+                print(f"[GridFinder] Error: {e}")
+                return {"found": False}
+    else:
+        print("[GridFinder] All keys exhausted")
+        return {"found": False}
 
     result = response.text.strip()
     print(f"[Gemini] {result}")
@@ -222,12 +251,9 @@ def click(target: str) -> bool:
     return True
 
 
-"""
-# ── Usage ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     result = grid_find("play button")
     print(result)
 
     # click("search button")
     click("play button")
-"""

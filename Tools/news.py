@@ -31,17 +31,18 @@ def search_news(query: str) -> str:
         if not results:
             return "No news found for that topic"
 
-        # Format output
-        output = f"\n📰 NEWS: {query.upper()}\n"
+        # output frmt
+
+        output = f"\n NEWS: {query.upper()}\n"
         output += "=" * 50 + "\n\n"
 
         for i, r in enumerate(results, 1):
             output += f"{i}. {r['title']}\n"
             output += f"   {r['body'][:200]}...\n"
-            output += f"   🔗 {r['url']}\n\n"
+            output += f"    {r['url']}\n\n"
 
         webbrowser.open(results[0]['url'])
-        output += "🌐 Opening top article in browser...\n\n"
+        output += " Opening top article in browser...\n\n"
         # LLM summary
 
         context = "\n".join([f"- {r['title']}: {r['body']}" for r in results])
@@ -55,7 +56,7 @@ Articles:
 """).content
 
         output += "=" * 50 + "\n"
-        output += f"📋 SUMMARY:\n{summary}\n"
+        output += f"📋 Here is the summary Boss:\n{summary}\n"
 
         return output
 

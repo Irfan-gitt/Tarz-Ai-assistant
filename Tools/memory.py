@@ -2,14 +2,12 @@ import chromadb
 import os
 from datetime import datetime
 
-# Initialize ChromaDB
-# PersistentClient = saves to disk (survives restarts)
 client = chromadb.PersistentClient(path="./tarz_memory")
 
-# Collection = like a table in normal DB
+
 tasks_collection = client.get_or_create_collection(
     name="tarz_tasks",
-    metadata={"hnsw:space": "cosine"}  # similarity measure
+    metadata={"hnsw:space": "cosine"}
 )
 
 preferences_collection = client.get_or_create_collection(
@@ -61,7 +59,7 @@ def get_recent_conversations(n=10) -> list:
     """Get recent conversations"""
     try:
         results = conversation_collection.get()
-        # Sort by timestamp, get last n
+
         items = list(zip(
             results["metadatas"],
             results["documents"]
