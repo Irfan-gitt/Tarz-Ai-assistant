@@ -56,7 +56,7 @@ def save_conversation(user: str, tarz: str):
     )
 
 
-# ── Retrieve ───────────────────────────────────────────────────────────────────
+# Retrieve
 
 def retrieve_similar_task(query: str, n: int = 3) -> list:
     """Find semantically similar past tasks."""

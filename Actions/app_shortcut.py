@@ -1,6 +1,8 @@
 import time
 import pyautogui
 
+# if you want you can add more shortcuts to do task faster without spending tocken, nb: (this is not ai gen command ok dont doubt me🤥)
+
 SHORTCUTS = {
     "brave": {
         "search":    ["ctrl", "l"],

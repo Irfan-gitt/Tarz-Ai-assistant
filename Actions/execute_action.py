@@ -141,7 +141,7 @@ def read_screen(question: str) -> str:
 def news_update(question: str) -> str:
     """Search for latest news on the topic and return summary + article links.
     Use when user asks about current events, news, wars, sports, politics."""
-    return search_news.invoke({"query": question})
+    return search_news(question)
 
 
 @tool
