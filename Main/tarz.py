@@ -1,4 +1,3 @@
-from langchain_ollama import ChatOllama
 import sys  # noqa
 import os  # noqa
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
@@ -12,34 +11,34 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_cerebras import ChatCerebras
-
-
 from Prompts.prompt import SYSTEM_PROMPT
 from Screen_Postition.get_coordinates import find_on_screen
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from Tools.memory import save_task, retrieve_similar_task, get_all_preferences, save_conversation, get_recent_conversations
-from Actions.execute_action import click, type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, correct_memory, wait, done
-from Tools.memory import get_recent_tasks
-from Tools.rag import (
-    save_task, retrieve_similar_task,
-    save_conversation, retrieve_similar_chats,
-    get_recent_tasks, get_all_preferences
-)
-from Audio.tts import speak
+from Tools.gmail import send_email, read_emails, search_emails
+
 from Audio.stt import listen as stt_listen
+from Audio.tts import speak
+print("on tools")  # noqa
+from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, detect_mood, correct_memory, wait, done
+from Tools.memory import save_task, retrieve_similar_task, retrieve_similar_chats, get_recent_tasks, get_all_preferences, save_conversation, get_recent_conversations
+
+from Actions.execute_action import click
+print("[Init] 3 - rag...")
 
 
 load_dotenv()
+
 
 api_key = os.getenv("groq_api")
 api_or = os.getenv("OPENROUTER_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
 TOOLS = [click, type_text, press_key, open_app,
-         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, set_timer, translate, correct_memory, clipboard, remember, wait, done]
+         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate, correct_memory, detect_mood, clipboard, remember, wait, done]
 
 
+print("[Init] Setting up LLMs...")
 llm_tools = ChatCerebras(
     model="gpt-oss-120b",
     api_key=api_cb,
@@ -76,6 +75,16 @@ Personality:
 - Never refuse a task without trying the tools first
 - If something fails → try again differently, don't give up
 
+━━━ COGNITIVE BEHAVIOR ━━━
+- You are Users's personal AI friend, not just an assistant
+- Read between the lines — if user sounds stressed, notice it
+- Proactively suggest things without being asked
+- If user mentions a problem → offer to help solve it
+- If user mentions a person → remember them for context
+- Connect dots across conversations — "you mentioned your exam is tomorrow..."
+- Give real opinions when asked — don't be neutral on everything
+- Think about what User actually needs, not just what he literally said
+
 Capabilities summary:
 - Control any Windows app
 - Remember user preferences and past tasks
@@ -104,6 +113,7 @@ set_alarm()      → alarm at specific time
 translate()      → translate any language
 remember()       → save user info to memory
 correct_memory() → fix wrong memory
+detect_mood()    → analyze user mood from message and act on it
 clipboard()      → copy/paste clipboard
 wait()           → wait N seconds
 done()           → mark task complete
@@ -115,6 +125,7 @@ done()           → mark task complete
 - User says "remember that I..." → remember()
 
 ━━━ SPOTIFY: PLAY A SONG ━━━
+Spotify search flow — always follow this exact order:
 1. open_app("spotify")
 2. wait(3)
 3. use_shortcut(app="spotify", action="search")
@@ -126,8 +137,9 @@ done()           → mark task complete
    ← NOT "play", NOT "play sailor song"
    ← The green circle button ▶ next to first search result
 8. wait(2)
-9. read_screen("is the song playing?")
+9. read_screen to confirm playing
 10. done()
+
 
 ━━━ SPOTIFY: PLAY A PLAYLIST ━━━
 1. open_app("spotify")
@@ -135,7 +147,10 @@ done()           → mark task complete
 3. read_screen("find the playlist name in the left sidebar")
 4. click("playlist name in left sidebar")
 5. wait(2)
-6. click("green play button")
+6. click("green play button")  
+   ← IMPORTANT: target must be exactly "green play button"
+   ← NOT "play", NOT "play sailor song"
+   ← The green circle button ▶ next to first search result
 7. wait(2)
 8. read_screen("is the playlist playing?")
 9. done()
@@ -166,9 +181,8 @@ done()           → mark task complete
 4. type_text("contact name")
 5. press_key("enter")
 6. wait(2)
-7. click("message input box")
-8. type_text("message")
-9. press_key("enter")
+7. type_text("message")
+8. press_key("enter")
 10. done()
 
 ━━━ BRAVE BROWSER: OPEN A WEBSITE ━━━
@@ -239,11 +253,18 @@ def build_conversation_history():
     return history
 
 
+print("[Init] Building conversation history...")
 conversation_history = [
     SystemMessage(content=SYSTEM_PROMPT)
 ] + build_conversation_history()
 
 TOOL_LLMS = [
+
+    ChatOpenAI(
+        base_url="https://models.inference.ai.azure.com",
+        api_key=api_openai,
+        model="gpt-4o-mini"
+    ),
 
     ChatCerebras(
         model="gpt-oss-120b",
@@ -251,11 +272,6 @@ TOOL_LLMS = [
         temperature=0.2
     ),
 
-    ChatOpenAI(
-        base_url="https://models.inference.ai.azure.com",
-        api_key=api_openai,
-        model="gpt-4o-mini"
-    ),
 
 
 
@@ -271,12 +287,17 @@ current_llm_idx = 0
 
 
 def get_llm_tools():
-    global current_llm_idx
+    global current_llm_idx  # 🙂
     llm = TOOL_LLMS[current_llm_idx]
     return llm.bind_tools(TOOLS)
 
 
+_pending_messages = None
+
+
 def think(user_input):
+
+    global _pending_messages  # iknow its bad practise iam just lazyyyy🙂
 
     similar_tasks = retrieve_similar_task(user_input, n=3)
     similar_chats = retrieve_similar_chats(user_input, n=5)
@@ -292,8 +313,13 @@ def think(user_input):
 
     similar_text = "\n".join([
         f"- '{t['task']}' → steps: {t['steps']}"
-        for t in similar_tasks if t["success"] == "True"
+        for t in similar_tasks if isinstance(t, dict) and t.get("success") == "True"
     ]) if similar_tasks else "None"
+
+    similar_chats_text = "\n".join([
+        f"- User: {chat.get('user', '')} | TARZ: {chat.get('tarz', '')}"
+        for chat in similar_chats if isinstance(chat, dict)
+    ]) if similar_chats else "None"
 
     prefs_text = "\n".join([
         f"- {k}: {v}" for k, v in prefs.items()
@@ -307,11 +333,21 @@ User Preferences:
 Recent completed tasks (for context only, don't copy steps exactly):
 {chr(10).join([f"- {t['task']}" for t in recent_tasks])
      if recent_tasks else "None"}
+
+Similar completed tasks:
+{similar_text}
+
+Similar past conversations:
+{similar_chats_text}
 """
-    messages = [
-        SystemMessage(content=SYSTEM_WITH_MEMORY),
-        HumanMessage(content=user_input)
-    ]
+    if _pending_messages:
+        messages = _pending_messages
+        messages.append(HumanMessage(content=user_input))
+    else:
+        messages = [
+            SystemMessage(content=SYSTEM_WITH_MEMORY),
+            HumanMessage(content=user_input)
+        ]
     if not is_computer_task(user_input):
 
         recent_tasks = get_recent_tasks(10)
@@ -344,7 +380,7 @@ Use this when user asks what you did, what tasks were completed, or you can use 
             try:
                 llm = get_llm_tools()
                 response = llm.invoke(messages)
-                break  # success
+                break
             except Exception as e:
                 if "429" in str(e) or "rate" in str(e).lower():
                     current_llm_idx = (current_llm_idx + 1) % len(TOOL_LLMS)
@@ -383,7 +419,13 @@ Use this when user asks what you did, what tasks were completed, or you can use 
             messages.append(ToolMessage(content=str(result),
                             tool_call_id=tool_call["id"]))
             time.sleep(0.5)
-
+    if not response.tool_calls:
+        # LLM asking a question — keep messages for next turn
+        if "?" in response.content:
+            _pending_messages = messages  # ← save state
+        else:
+            _pending_messages = None
+        return response.content
     save_task(user_input=user_input, steps=completed_steps, success=True)
     return last_result if last_result else "Max steps reached"
 
@@ -395,7 +437,12 @@ def main():
             continue
         result = think(user_input)
         print(f"TARZ: {result}")
-        speak(result)
+        if any(tool in result for tool in ["wether_app()", "news_update()",
+                                           "open_app()", "click()"]):
+            pass
+        else:
+            speak(result)
 
 
-main()
+if __name__ == "__main__":
+    main()

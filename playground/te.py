@@ -89,7 +89,9 @@ News flow:
 
 
 def listen():
-    return stt_listen()
+    user_input = input("You:")
+    return user_input
+    # return stt_listen()
 
 
 def is_computer_task(user_input: str) -> bool:

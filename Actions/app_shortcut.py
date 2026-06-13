@@ -4,6 +4,7 @@ import pyautogui
 # if you want you can add more shortcuts to do task faster without spending tocken, nb: (this is not ai gen command ok dont doubt me🤥)
 
 SHORTCUTS = {
+
     "brave": {
         "search":    ["ctrl", "l"],
         "new_tab":   ["ctrl", "t"],
@@ -31,6 +32,14 @@ SHORTCUTS = {
     "whatsapp": {
         "search":   ["ctrl", "f"],
         "new_chat": ["ctrl", "n"]
+    },
+
+
+    "windows": {
+        "minimize": ["win", "down"],
+        "maximize": ["win", "up"],
+        "close": ["alt", "f4"]
+
     }
 }
 

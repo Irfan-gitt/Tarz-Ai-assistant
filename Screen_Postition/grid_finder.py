@@ -33,8 +33,8 @@ def get_gemini_client():
     return genai.Client(api_key=GEMINI_KEYS[current_key_idx])
 
 
-COLS = 25
-ROWS = 18
+COLS = 24
+ROWS = 17
 
 GRID_COLOR = (255, 255, 0, 120)
 LABEL_COLOR = (255, 255, 0, 220)
