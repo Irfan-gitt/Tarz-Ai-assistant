@@ -1,3 +1,2 @@
 @echo off
-cd /d %~dp0
-start /min venv\Scripts\pythonw.exe tarz_tray.py
+start "" "C:\Users\IRFAN\Desktop\Tarz-ai\venv\Scripts\pythonw.exe" "C:\Users\IRFAN\Desktop\Tarz-ai\tarz_tray.py"

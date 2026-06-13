@@ -70,6 +70,29 @@ def get_recent_conversations(n=10) -> list:
         return []
 
 
+def retrieve_similar_chats(query: str, n=5) -> list:
+    """Find semantically similar past conversations"""
+    try:
+        results = conversation_collection.query(
+            query_texts=[query],
+            n_results=n
+        )
+
+        if results["documents"][0]:
+            chats = []
+            for i, _ in enumerate(results["documents"][0]):
+                meta = results["metadatas"][0][i]
+                chats.append({
+                    "user": meta.get("user", ""),
+                    "tarz": meta.get("tarz", "")
+                })
+            return chats
+    except:
+        pass
+
+    return []
+
+
 def save_task(user_input: str, steps: list, success: bool = True):
     """Save a completed task to memory"""
 
@@ -88,8 +111,8 @@ def save_task(user_input: str, steps: list, success: bool = True):
     print(f"[Memory] Saved task: {user_input}")
 
 
-def retrieve_similar_task(user_input: str, n=1) -> dict | None:
-    """Find similar past task"""
+def retrieve_similar_task(user_input: str, n=1) -> list:
+    """Find similar past tasks"""
 
     try:
         results = tasks_collection.query(
@@ -98,15 +121,19 @@ def retrieve_similar_task(user_input: str, n=1) -> dict | None:
         )
 
         if results["documents"][0]:
-            return {
-                "task": results["documents"][0][0],
-                "steps": results["metadatas"][0][0]["steps"].split(","),
-                "success": results["metadatas"][0][0]["success"]
-            }
+            tasks = []
+            for i, doc in enumerate(results["documents"][0]):
+                meta = results["metadatas"][0][i]
+                tasks.append({
+                    "task": doc,
+                    "steps": meta["steps"].split(","),
+                    "success": meta["success"]
+                })
+            return tasks
     except:
         pass
 
-    return None
+    return []
 
 
 def save_preference(key: str, value: str):

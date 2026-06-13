@@ -1,26 +1,55 @@
 
-from Tools.rag import save_preference, save_task
-import pyperclip
-from Tools.translator import run_translate
-import os
-from duckduckgo_search import DDGS
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
-import pyautogui
-from PIL import Image
-import time
-from groq import Groq
-import base64
-from openai import OpenAI
-from Prompts.prompt import SYSTEM_PROMPT
-from Screen_Postition.get_coordinates import find_on_screen
-from Vison.vision import describe_screen
-from langchain_core.tools import tool
-from Tools.news import search_news
-from Actions.app_shortcut import volume_down, volume_up, mute, SHORTCUTS
-from Tools. weather import get_weather
-from Tools.timer_alarm import run_timer, run_alarm
-from Tools.memory import save_preference, retrieve_similar_task
+
+print("pyperclip")  # noqa
+import pyperclip  # noqa
+print("trnslt")  # noqa
+from Tools.translator import run_translate  # noqa
+print("os")  # noqa
+import os  # noqa
+print("duck")  # noqa
+from duckduckgo_search import DDGS  # noqa
+print("chatgroq")  # noqa
+from langchain_groq import ChatGroq  # noqa
+print("dot")  # noqa
+from dotenv import load_dotenv  # noqa
+print("pil")  # noqa
+from PIL import Image  # noqa
+import time  # noqa
+from groq import Groq  # noqa
+import base64  # noqa
+from openai import OpenAI  # noqa
+from Prompts.prompt import SYSTEM_PROMPT  # noqa
+print("[Actions] 1 - pyautogui...")  # noqa
+import pyautogui  # noqa
+import time  # noqa
+
+print("[Actions] 2 - get_coordinates...")  # noqa
+from Screen_Postition.get_coordinates import find_on_screen  # noqa
+print("rag")  # noqa
+from Tools.memory import save_preference  # noqa
+
+print("[Actions] 3 - vision...")  # noqa
+from Vison.vision import describe_screen  # noqa
+
+print("[Actions] 4 - shortcuts...")  # noqa
+from .app_shortcut import volume_down, volume_up, mute, SHORTCUTS  # noqa
+
+print("[Actions] 5 - weather...")  # noqa
+from Tools.weather import get_weather  # noqa
+
+print("[Actions] 6 - timer...")  # noqa
+from Tools.timer_alarm import run_timer, run_alarm  # noqa
+
+print("[Actions] 7 - translator...")  # noqa
+from Tools.translator import run_translate  # noqa
+
+print("[Actions] 8 - news...")  # noqa
+from Tools.news import search_news   # noqa
+
+print("[Actions] 9 - langchain tools...")  # noqa
+from langchain_core.tools import tool  # noqa
+
+print("[Actions] All imports done ✓")  # noqa
 load_dotenv()
 
 api_key = os.getenv("groq_api")
@@ -184,7 +213,7 @@ def volume_control(action: str) -> str:
 def use_shortcut(app: str, action: str) -> str:
     """
     Trigger an in-app keyboard shortcut.
-    Examples: app=spotify action=search, app=youtube action=search
+    Examples: app=spotify action=search, app=youtube action=search , if user want to minimize the current window then app=windows action=minimize
     """
     app = app.strip().lower()
     action = action.strip().lower()
@@ -197,6 +226,15 @@ def use_shortcut(app: str, action: str) -> str:
         time.sleep(0.3)
         return f"Used {app}/{action} shortcut"
     return f"No shortcut found for {app}/{action}"
+
+
+@tool
+def detect_mood(message: str) -> str:
+    """Detect user emotional state and respond accordingly."""
+    prompt = SYSTEM_PROMPT + \
+        f"\n\nUser message: {message}\n\nDetect the user's mood and emotional state based on this message. Respond with one or more of these labels only, separated by commas if multiple: happy, sad, stressed, relaxed, angry, excited, bored, anxious."
+    response = llm(prompt)
+    return f"Detected mood: {response.strip()}"
 
 
 @tool

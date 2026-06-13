@@ -65,7 +65,7 @@ echo [✓] TARZ will start automatically on boot
 echo.
 echo ================================
 echo  [✓] TARZ Setup Complete!
-echo  Just say "Hey TARZ" anytime
+echo  Just say "Hey" anytime
 echo  TARZ is starting now...
 echo ================================
 echo.

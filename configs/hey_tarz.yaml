@@ -1,0 +1,5 @@
+model_name: hey_tarz
+target_phrases:
+  - "hey tarz"
+n_samples: 5000
+steps: 30000

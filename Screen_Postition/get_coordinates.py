@@ -1,4 +1,3 @@
-import re
 import pyautogui
 import easyocr
 from dotenv import load_dotenv
@@ -10,7 +9,7 @@ pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.5
 
 try:
-    reader = easyocr.Reader(['en'], gpu=True)
+    reader = easyocr.Reader(['en'], gpu=False)
 except Exception:
     reader = easyocr.Reader(['en'], gpu=False)
 
@@ -19,20 +18,16 @@ def take_screenshot():
     pyautogui.screenshot().save("temp/screen.png")
 
 
-def easyocr_find(target: str) -> dict:
+def easyocr_find(target):
     try:
         results = reader.readtext("temp/screen.png")
-        target_lower = target.lower()
         best = None
         best_conf = 0
 
         for (bbox, text, conf) in results:
             if conf < 0.5:
                 continue
-
-            text_lower = text.lower()
-
-            if re.search(r'\b' + re.escape(target_lower) + r'\b', text_lower):
+            if target.lower() in text.lower():
                 if conf > best_conf:
                     x = int((bbox[0][0] + bbox[2][0]) / 2)
                     y = int((bbox[0][1] + bbox[2][1]) / 2)
@@ -40,6 +35,7 @@ def easyocr_find(target: str) -> dict:
                     best_conf = conf
 
         return best if best else {"found": False}
+
     except Exception as e:
         print(f"[OCR] Error: {e}")
         return {"found": False}

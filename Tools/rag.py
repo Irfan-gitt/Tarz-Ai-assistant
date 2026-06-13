@@ -14,7 +14,7 @@ os.makedirs("memory", exist_ok=True)
 
 client = chromadb.PersistentClient(path="memory/chroma")
 embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2")
+    model_name="all-MiniLM-L6-v2", device="cpu")
 
 tasks_col = client.get_or_create_collection(
     name="tasks",
@@ -97,8 +97,8 @@ def retrieve_similar_chats(query: str, n: int = 5) -> list:
         for i, doc in enumerate(results["documents"][0]):
             meta = results["metadatas"][0][i]
             chats.append({
-                "user": meta["user"],
-                "tarz": meta["tarz"]
+                "user": meta.get("user", ""),
+                "tarz": meta.get("tarz", "")
             })
         return chats
 

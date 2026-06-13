@@ -3,9 +3,36 @@ __pycache__/
 venv/
 env/
 .env
+.env.*
 .vscode/
 *.log
 .DS_Store
 Thumbs.db
 temp/
 *.png
+
+# Secrets and local auth
+Tools/gmail_credentials.json
+gmail_credentials.json
+gmail_token.pickle
+*.pickle
+
+# Runtime output and generated media
+output/
+*.wav
+*.mp3
+screen.png
+temp/
+
+# Local memory/vector databases
+memory/
+tarz_memory/
+
+# Model/data downloads and training artifacts
+data/
+openWakeWord/
+Audio/wakeword_data/
+
+# Local caches
+.cache
+.pytest_cache/
