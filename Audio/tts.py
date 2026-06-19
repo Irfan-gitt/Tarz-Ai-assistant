@@ -1,34 +1,38 @@
-import edge_tts
-import asyncio
+"""
+Audio/tts.py
+Piper TTS — local, offline, real-time.
+Tuned for natural sounding output.
+"""
+
+import subprocess
 import pygame
 import os
 
 os.makedirs("temp", exist_ok=True)
 
+VOICE_MODEL = "en_US-ryan-high.onnx"
 
-async def speak_async(text: str):
+# Tuning parameters
+LENGTH_SCALE = 1.05   # >1 = slower/calmer, <1 = faster. 1.0 = default speed
+NOISE_SCALE = 0.667  # variation in pitch/tone — default 0.667, lower = more monotone
+NOISE_W = 0.8    # variation in speaking rate — default 0.8
+
+
+def speak(text: str):
     text = text.replace("TARZ", "Tarz").replace("tarz", "Tarz")
 
-    communicate = edge_tts.Communicate(
-        text,
-        voice="en-US-GuyNeural",
-        rate="+8%",    # slightly faster — GenZ energy
-        pitch="-1Hz",  # tiny bit deeper — more confident
-        volume="+4%"
-    )
-
-    with open("temp/output.mp3", "wb") as f:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
+    subprocess.run([
+        "piper",
+        "--model", VOICE_MODEL,
+        "--output_file", "temp/output.wav",
+        "--length_scale", str(LENGTH_SCALE),
+        "--noise_scale", str(NOISE_SCALE),
+        "--noise_w", str(NOISE_W),
+    ], input=text.encode(), capture_output=True)
 
     pygame.mixer.init()
-    pygame.mixer.music.load("temp/output.mp3")
+    pygame.mixer.music.load("temp/output.wav")
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():
         pygame.time.Clock().tick(10)
     pygame.mixer.quit()
-
-
-def speak(text: str):
-    asyncio.run(speak_async(text))

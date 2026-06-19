@@ -3,6 +3,7 @@ import keyboard
 import threading
 import time
 import os
+import re
 import importlib.util
 import pystray
 from PIL import Image, ImageDraw
@@ -20,7 +21,7 @@ print("[Tray] TARZ loaded ✓")
 
 
 def tarz_loop():
-    speak("TARZ is ready. Press Control + SPACE to ")
+    speak("TARZ is ready. Press Control + SPACE to talk")
 
     while True:
 
@@ -29,7 +30,7 @@ def tarz_loop():
 
         print("[TARZ] Listening...")
         # input("You: ")
-        user_input = stt_listen()
+        user_input = input("You: ")
 
         if not user_input:
             speak("Didn't catch that, press space to try again.")
@@ -38,10 +39,13 @@ def tarz_loop():
         print(f"You: {user_input}")
         result = think(user_input)
         print(f"TARZ: {result}")
-        speak(result)
 
-        # After task done → back to waiting
-        print("\n[TARZ] Task complete. Press SPACE for next command.")
+        clean_text = re.sub(r'[^a-zA-Z0-9\s+=\-@$%&]', '', result)
+        speak(clean_text)
+
+
+# After task done → back to waiting
+print("\n[TARZ] Task complete. Press SPACE for next command.")
 
 
 def make_icon():

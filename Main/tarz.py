@@ -1,3 +1,4 @@
+import re
 import sys  # noqa
 import os  # noqa
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
@@ -12,7 +13,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_cerebras import ChatCerebras
 from Prompts.prompt import SYSTEM_PROMPT
-from Screen_Postition.get_coordinates import find_on_screen
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Tools.gmail import send_email, read_emails, search_emails
@@ -34,9 +34,13 @@ api_key = os.getenv("groq_api")
 api_or = os.getenv("OPENROUTER_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
+username = "Irfan"
+
 TOOLS = [click, type_text, press_key, open_app,
          read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate, correct_memory, detect_mood, clipboard, remember, wait, done]
 
+
+FAKE_TOOL_PATTERN = re.compile(r'\b[a-z_]+\([^)]*\)')
 
 print("[Init] Setting up LLMs...")
 llm_tools = ChatCerebras(
@@ -44,19 +48,29 @@ llm_tools = ChatCerebras(
     api_key=api_cb,
     temperature=0.2
 ).bind_tools(TOOLS)
-llm_plain = ChatGroq(
-    api_key=os.getenv("groq_api"),
-    temperature=0.7,
-    model="llama-3.3-70b-versatile"
-)
-api_openai = os.getenv("GITHUB_TOKEN")
+try:
+    llm_plain = ChatGroq(
+        api_key=os.getenv("groq_api"),
+        temperature=0.7,
+        model="llama-3.3-70b-versatile"
+    )
 
-SYSTEM = """\
+except Exception as e:
+    print(f"An error occurred while setting up LLMs: {e}")
+    llm_plain = ChatGroq(
+        api_key=os.getenv("groq_api"),
+        temperature=0.7,
+        model="llama-3.3-70b-versatile"
+    )
+
+
+api_openai = os.getenv("GITHUB_TOKEN")
+SYSTEM = f"""\
 ━━━ IDENTITY ━━━
 Name: TARZ
 Type: Intelligent desktop AI assistant
 Voice: Direct, confident, GenZ-friendly — no corporate tone
-Creator: Irfan
+Creator: {username}
 
 Who you are:
 - You are TARZ — not ChatGPT, not Siri, not Alexa
@@ -118,6 +132,17 @@ clipboard()      → copy/paste clipboard
 wait()           → wait N seconds
 done()           → mark task complete
 
+ABSOLUTE RULES:
+- You MUST use real tool/function calls for every action.
+- NEVER write tool syntax as plain text, e.g. open_app("x") or type_text("y") as words in your reply — that is forbidden.
+- NEVER say "sent", "done", "opened", "playing" etc. unless a tool call actually returned that result.
+- One tool call per step. Wait for its result before the next step.
+- If you need info from the user (e.g. "what's the message?"), respond with a plain question and NO tool-call-looking text — just ask, then stop.
+- Follow ONLY the defined workflows below. Do not invent extra steps (e.g. don't wait for replies unless asked).
+- Call done(summary=...) only after tool results confirm the task is complete.
+- The 'summary' argument in done() can be casual/friendly — that's the only place personality belongs.
+
+
 ━━━ MEMORY RULES ━━━
 - User says "that's wrong" / "actually" / "correct that" → correct_memory()
 - User shares name, preference, habit → remember()
@@ -164,15 +189,16 @@ Spotify search flow — always follow this exact order:
 ━━━ YOUTUBE: SEARCH AND PLAY ━━━
 1. open_app("brave")
 2. wait(3)
-3. type_text("youtube.com")
-4. press_key("enter")
-5. wait(3)
-6. use_shortcut(app="youtube", action="search")
-7. type_text("video name")
-8. press_key("enter")
-9. wait(2)
-10. click("first video result")
-11. done()
+3. use_shortcut(app="brave", action="new_tab")
+4. type_text("youtube.com")
+5. press_key("enter")
+6. wait(3)
+7. use_shortcut(app="youtube", action="search")
+8. type_text("video name")
+9. press_key("enter")
+10. wait(2)
+11. click("first video result")
+12. done()
 
 ━━━ WHATSAPP: SEARCH AND MESSAGE ━━━
 1. open_app("whatsapp")
@@ -185,14 +211,83 @@ Spotify search flow — always follow this exact order:
 8. press_key("enter")
 10. done()
 
+━━━ TELEGRAM: SEARCH AND MESSAGE ━━━
+1. open_app("telegram")
+2. wait(5)
+3. type_text("contact name")
+4. press_key("enter")
+5. wait(2)
+6. type_text("message")
+7. press_key("enter")
+8. done()
+
+
+━━━ DISCORD: SEARCH USER OR CHANNEL ━━━
+1. open_app("discord")
+2. wait(5)
+3. use_shortcut(app="discord", action="switch")
+4. wait(1)
+5. type_text("user or channel")
+6. press_key("enter")
+7. done()
+
+━━━ DISCORD: SEND MESSAGE ━━━
+1. open_app("discord")
+2. wait(5)
+3. use_shortcut(app="discord", action="search")
+4. wait(1)
+5. type_text("username")
+6. press_key("enter")
+7. wait(2)
+8. type_text("message")
+9. press_key("enter")
+10. done()
+
+━━━ DISCORD: ANSWER A PHONE CALL OR DECLINE A PHONE CALL ━━━
+  To answer:
+    1. read_screen("check if discord is already open, if not open it")
+    2. wait(2)
+    3. use_shortcut(app="discord", action="answer_call")
+    4. done()
+
+  To decline:
+        1. read_screen("check if discord is already open, if not open it")
+        2. wait(2)
+        3. use_shortcut(app="discord", action="decline_call")
+        4. done()
+        
+
+━━━ DISCORD: MUTE AND UNMUTE  MICROPHONE ━━━
+1. read_screen("check if discord is already open, if not open it")
+2. wait(2)
+3. use_shortcut(app="discord", action="mute")
+4. done()
+
+━━━ DISCORD: MUTE AND UNMUTE SPEAKERS ━━━
+1. read_screen("check if discord is already open, if not open it")
+2. wait(2)
+3. use_shortcut(app="discord", action="deafen")
+4. done()
+
 ━━━ BRAVE BROWSER: OPEN A WEBSITE ━━━
 1. open_app("brave")
 2. wait(3)
-3. use_shortcut(app="brave", action="search")
-4. type_text("website url or search query")
-5. press_key("enter")
-6. wait(3)
-7. done()
+3. use_shortcut(app="brave", action="new_tab")
+4. use_shortcut(app="brave", action="search")
+5. type_text("website url or search query")
+6. press_key("enter")
+7. wait(3)
+8. done()
+
+━━━ GOOGLE CHROME: OPEN A WEBSITE ━━━
+1. open_app("chrome")
+2. wait(3)
+3. use_shortcut(app="chrome", action="new_tab")
+4. use_shortcut(app="chrome", action="search")
+5. type_text("website url or search query")
+6. press_key("enter")
+7. wait(3)
+8. done()
 
 ━━━ VOLUME CONTROL ━━━
 - "volume up"   → volume_control("up")   → done()
@@ -389,9 +484,17 @@ Use this when user asks what you did, what tasks were completed, or you can use 
                     time.sleep(1)
                     continue
                 break
+
         messages.append(response)
 
         if not response.tool_calls:
+            if FAKE_TOOL_PATTERN.search(response.content) and not completed_steps:
+                print("[Guard] Hallucinated tool syntax detected — forcing retry")
+                messages.append(HumanMessage(
+                    content="Do not write function syntax as text. Either call the actual tool, or ask a plain question with no code-like text."
+                ))
+                continue
+
             if completed_steps:
                 save_task(user_input=user_input,
                           steps=completed_steps, success=True)

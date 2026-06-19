@@ -24,6 +24,17 @@ SHORTCUTS = {
         "previous":    ["ctrl", "left"],
         "play_pause":  ["space"]
     },
+
+    "discord": {
+        "mute": ["ctrl", "shift", "m"],
+        "deafen": ["ctrl", "shift", "d"],
+        "search": ["ctrl", "f"],
+        "switch": ["ctrl", "k"],
+        "upload": ["ctrl", "shift", "u"],
+        "answer_call": ["ctrl", "enter"],
+        "decline_call": ["esc"]
+    },
+
     "chrome": {
         "search":    ["ctrl", "l"],
         "new_tab":   ["ctrl", "t"],
@@ -33,6 +44,7 @@ SHORTCUTS = {
         "search":   ["ctrl", "f"],
         "new_chat": ["ctrl", "n"]
     },
+
 
 
     "windows": {

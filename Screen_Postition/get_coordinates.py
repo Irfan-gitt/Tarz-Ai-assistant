@@ -8,10 +8,8 @@ load_dotenv()
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.5
 
-try:
-    reader = easyocr.Reader(['en'], gpu=False)
-except Exception:
-    reader = easyocr.Reader(['en'], gpu=False)
+
+reader = easyocr.Reader(['en'], gpu=False)
 
 
 def take_screenshot():

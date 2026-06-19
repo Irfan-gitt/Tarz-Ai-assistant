@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>TARZ</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    :root {
+      --bg: #0c0c0c;
+      --surface: #161616;
+      --surface2: #1e1e1e;
+      --border: #2a2a2a;
+      --border2: #333;
+      --text: #e8e8e8;
+      --muted: #666;
+      --muted2: #444;
+      --accent: #888;
+      --white: #fff;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .brand {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      text-transform: uppercase
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .model-tag {
+      font-size: 0.65rem;
+      color: var(--muted2);
+      letter-spacing: 0.08em;
+      padding: 3px 8px;
+      border: 1px solid var(--border2);
+      border-radius: 20px;
+    }
+
+    /* ── Voice toggle ── */
+    .voice-wrap {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer
+    }
+
+    .voice-label {
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase
+    }
+
+    .switch {
+      position: relative;
+      width: 30px;
+      height: 16px
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0
+    }
+
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: var(--border2);
+      border-radius: 20px;
+      transition: 0.25s;
+    }
+
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 11px;
+      height: 11px;
+      background: var(--muted);
+      border-radius: 50%;
+      left: 2.5px;
+      top: 2.5px;
+      transition: 0.25s;
+    }
+
+    .switch input:checked+.slider {
+      background: #333
+    }
+
+    .switch input:checked+.slider::before {
+      transform: translateX(14px);
+      background: var(--white)
+    }
+
+    /* ── Main body ── */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+      padding: 0 20px
+    }
+
+    /* ── Orb / graphic ── */
+    .orb-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 28px 0 18px;
+      flex-shrink: 0;
+      transition: all 0.4s;
+    }
+
+    .orb-wrap.has-messages {
+      padding: 12px 0 8px
+    }
+
+    .orb-wrap.has-messages .orb-outer {
+      width: 48px;
+      height: 48px
+    }
+
+    .orb-wrap.has-messages .orb-ring {
+      width: 64px;
+      height: 64px
+    }
+
+    .orb-wrap.has-messages .orb-tagline {
+      display: none
+    }
+
+    .orb-ring {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: conic-gradient(from 0deg, #222, #3a3a3a, #222, #2e2e2e, #222);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: spin 8s linear infinite;
+      box-shadow: 0 0 40px rgba(255, 255, 255, 0.04);
+      transition: all 0.4s;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg)
+      }
+    }
+
+    .orb-outer {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #2e2e2e, #1a1a1a 40%, #0c0c0c);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 2px 8px rgba(255, 255, 255, 0.05), 0 8px 32px rgba(0, 0, 0, 0.6);
+      animation: breathe 4s ease-in-out infinite;
+      transition: all 0.4s;
+    }
+
+    @keyframes breathe {
+
+      0%,
+      100% {
+        box-shadow: inset 0 2px 8px rgba(255, 255, 255, 0.05), 0 8px 32px rgba(0, 0, 0, 0.6)
+      }
+
+      50% {
+        box-shadow: inset 0 2px 12px rgba(255, 255, 255, 0.08), 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 60px rgba(255, 255, 255, 0.02)
+      }
+    }
+
+    .orb-dots {
+      display: flex;
+      gap: 5px
+    }
+
+    .orb-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #333;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .orb-dot:nth-child(2) {
+      animation-delay: .3s;
+      background: #2e2e2e
+    }
+
+    .orb-dot:nth-child(3) {
+      animation-delay: .6s;
+      background: #2a2a2a
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        transform: scale(1);
+        opacity: 0.6
+      }
+
+      50% {
+        transform: scale(1.4);
+        opacity: 1
+      }
+    }
+
+    .orb-tagline {
+      font-size: 0.72rem;
+      color: var(--muted2);
+      letter-spacing: 0.12em;
+      margin-top: 14px;
+      text-transform: uppercase
+    }
+
+    /* ── Chat messages ── */
+    .chat {
+      width: 100%;
+      max-width: 580px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 0 8px;
+    }
+
+    .chat::-webkit-scrollbar {
+      width: 3px
+    }
+
+    .chat::-webkit-scrollbar-thumb {
+      background: var(--border)
+    }
+
+    .msg {
+      padding: 8px 0;
+      animation: fadeIn 0.25s ease
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(6px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+
+    .msg-sender {
+      font-size: 0.65rem;
+      color: var(--muted2);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 4px
+    }
+
+    .msg.tarz .msg-sender {
+      color: var(--accent)
+    }
+
+    .bubble {
+      display: inline-block;
+      max-width: 88%;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 0.88rem;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .msg.tarz .bubble {
+      background: var(--surface);
+      border: 1px solid var(--border)
+    }
+
+    .msg.user .bubble {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      margin-left: auto;
+      display: block
+    }
+
+    .msg.user {
+      text-align: right
+    }
+
+    /* ── Thinking ── */
+    .thinking {
+      padding: 8px 0
+    }
+
+    .thinking-dots {
+      display: flex;
+      gap: 5px;
+      align-items: center
+    }
+
+    .thinking-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--muted2);
+      animation: tpulse 1.2s ease-in-out infinite;
+    }
+
+    .thinking-dot:nth-child(2) {
+      animation-delay: .2s
+    }
+
+    .thinking-dot:nth-child(3) {
+      animation-delay: .4s
+    }
+
+    @keyframes tpulse {
+
+      0%,
+      80%,
+      100% {
+        transform: scale(0.7);
+        opacity: 0.4
+      }
+
+      40% {
+        transform: scale(1);
+        opacity: 1
+      }
+    }
+
+    /* ── Input area (centered) ── */
+    .input-area {
+      width: 100%;
+      max-width: 580px;
+      padding: 12px 0 20px;
+      flex-shrink: 0;
+    }
+
+    .input-box {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 14px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .input-box:focus-within {
+      border-color: #444
+    }
+
+    .input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 0;
+      padding: 10px 12px
+    }
+
+    #textInput {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.9rem;
+      resize: none;
+      min-height: 24px;
+      max-height: 120px;
+      line-height: 1.5;
+      padding: 2px 8px 2px 0;
+    }
+
+    #textInput::placeholder {
+      color: var(--muted2)
+    }
+
+    .input-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0
+    }
+
+    .action-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+      background: var(--surface2);
+      color: var(--text)
+    }
+
+    .action-btn svg {
+      width: 16px;
+      height: 16px
+    }
+
+    .mic-btn.on {
+      color: var(--white)
+    }
+
+    .mic-btn.recording {
+      color: var(--white);
+      background: #2a2a2a;
+      animation: mic-pulse 1s infinite
+    }
+
+    @keyframes mic-pulse {
+
+      0%,
+      100% {
+        background: #2a2a2a
+      }
+
+      50% {
+        background: #333
+      }
+    }
+
+    .send-btn {
+      background: var(--surface2);
+      color: var(--text)
+    }
+
+    .send-btn:hover {
+      background: #2e2e2e
+    }
+
+    .input-hint {
+      font-size: 0.6rem;
+      color: var(--muted2);
+      padding: 6px 14px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid var(--border);
+    }
+
+    .hint-key {
+      padding: 1px 5px;
+      border: 1px solid var(--border2);
+      border-radius: 3px;
+      font-size: 0.58rem;
+      color: var(--muted2);
+      margin: 0 2px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">TARZ</div>
+    <div class="header-right">
+      <div class="model-tag">CEREBRAS · GPT-4o</div>
+      <label class="voice-wrap">
+        <span class="voice-label">Voice</span>
+        <span class="switch">
+          <input type="checkbox" id="voiceToggle" checked />
+          <span class="slider"></span>
+        </span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Orb -->
+    <div class="orb-wrap" id="orbWrap">
+      <div class="orb-ring">
+        <div class="orb-outer">
+          <div class="orb-dots">
+            <div class="orb-dot"></div>
+            <div class="orb-dot"></div>
+            <div class="orb-dot"></div>
+          </div>
+        </div>
+      </div>
+      <div class="orb-tagline">Ask me anything</div>
+    </div>
+
+    <!-- Chat -->
+    <div class="chat" id="chat"></div>
+
+    <!-- Input -->
+    <div class="input-area">
+      <div class="input-box">
+        <div class="input-row">
+          <textarea id="textInput" rows="1" placeholder="Message TARZ..."></textarea>
+          <div class="input-actions">
+            <button class="action-btn mic-btn" id="micBtn" title="Voice input">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </button>
+            <button class="action-btn send-btn" id="sendBtn" title="Send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5" />
+                <polyline points="5 12 12 5 19 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="input-hint">
+          <span><span class="hint-key">Enter</span> to send &nbsp;·&nbsp; <span class="hint-key">Shift+Enter</span> new
+            line</span>
+          <span id="micStatus">Click mic to talk</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const textInput = document.getElementById('textInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const micBtn = document.getElementById('micBtn');
+    const voiceToggle = document.getElementById('voiceToggle');
+    const orbWrap = document.getElementById('orbWrap');
+    const micStatus = document.getElementById('micStatus');
+    let isListening = false;
+    let hasMessages = false;
+
+    // Auto-resize textarea
+    textInput.addEventListener('input', () => {
+      textInput.style.height = 'auto';
+      textInput.style.height = Math.min(textInput.scrollHeight, 120) + 'px';
+    });
+
+    // Enter to send, Shift+Enter for newline
+    textInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    function addMessage(text, sender) {
+      if (!hasMessages) {
+        hasMessages = true;
+        orbWrap.classList.add('has-messages');
+      }
+      const div = document.createElement('div');
+      div.className = `msg ${sender}`;
+      div.innerHTML = `
+    <div class="msg-sender">${sender === 'tarz' ? 'Tarz' : 'You'}</div>
+    <div class="bubble"></div>
+  `;
+      div.querySelector('.bubble').textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function showThinking() {
+      const div = document.createElement('div');
+      div.className = 'thinking';
+      div.id = 'thinking';
+      div.innerHTML = `<div class="msg-sender">Tarz</div>
+    <div class="thinking-dots">
+      <div class="thinking-dot"></div>
+      <div class="thinking-dot"></div>
+      <div class="thinking-dot"></div>
+    </div>`;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function hideThinking() {
+      const el = document.getElementById('thinking');
+      if (el) el.remove();
+    }
+
+    async function sendMessage() {
+      const text = textInput.value.trim();
+      if (!text) return;
+      addMessage(text, 'user');
+      textInput.value = '';
+      textInput.style.height = 'auto';
+      sendBtn.disabled = true;
+      showThinking();
+
+      const result = await window.pywebview.api.send_message(text);
+      hideThinking();
+      addMessage(result, 'tarz');
+      sendBtn.disabled = false;
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    voiceToggle.addEventListener('change', () => {
+      window.pywebview.api.set_tts(voiceToggle.checked);
+    });
+
+    micBtn.addEventListener('click', async () => {
+      if (isListening) return;
+      isListening = true;
+      micBtn.classList.add('recording');
+      micStatus.textContent = 'Listening...';
+
+      const text = await window.pywebview.api.start_voice();
+
+      micBtn.classList.remove('recording');
+      isListening = false;
+      micStatus.textContent = 'Click mic to talk';
+
+      if (text) {
+        textInput.value = text;
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+
+</html>
