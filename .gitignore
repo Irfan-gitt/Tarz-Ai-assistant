@@ -36,3 +36,8 @@ Audio/wakeword_data/
 # Local caches
 .cache
 .pytest_cache/
+
+*.onnx
+*.onnx.json
+piper.exe
+configs/
