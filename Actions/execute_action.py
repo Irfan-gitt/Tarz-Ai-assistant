@@ -26,7 +26,7 @@ import time  # noqa
 print("[Actions] 2 - get_coordinates...")  # noqa
 from Screen_Postition.get_coordinates import find_on_screen  # noqa
 print("rag")  # noqa
-from Tools.memory import save_preference  # noqa
+from Tools.memory import save_preference, save_memory  # noqa
 
 print("[Actions] 3 - vision...")  # noqa
 from Vison.vision import describe_screen  # noqa
@@ -98,6 +98,7 @@ def correct_memory(key: str, correct_value: str) -> str:
     correct_memory(key='favourite_song', correct_value='Sailor Song')
     """
     save_preference(key, correct_value)
+    save_memory("preference", key, correct_value, importance=9, source="correction")
     return f"Corrected: {key} = {correct_value}"
 
 
@@ -113,6 +114,7 @@ def remember(key: str, value: str) -> str:
     remember(key='city', value='Trivandrum')
     """
     save_preference(key, value)
+    save_memory("preference", key, value, importance=8, source="manual")
     return f"Remembered: {key} = {value}"
 
 
@@ -246,5 +248,5 @@ def wait(seconds: int) -> str:
 
 @tool
 def done(summary: str) -> str:
-    """Call this when the task is fully complete."""
+    """Finish once a tool result or screen state confirms the user's requested outcome."""
     return f"Done: {summary}"

@@ -21,7 +21,7 @@ from Audio.stt import listen as stt_listen
 from Audio.tts import speak
 print("on tools")  # noqa
 from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, detect_mood, correct_memory, wait, done
-from Tools.memory import save_task, retrieve_similar_task, retrieve_similar_chats, get_recent_tasks, get_all_preferences, save_conversation, get_recent_conversations
+from Tools.memory import save_task, retrieve_similar_task, retrieve_similar_chats, get_recent_tasks, get_all_preferences, save_conversation, get_recent_conversations, build_memory_context, auto_extract_memories
 
 from Actions.execute_action import click
 print("[Init] 3 - rag...")
@@ -34,13 +34,30 @@ api_key = os.getenv("groq_api")
 api_or = os.getenv("OPENROUTER_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
-username = "Irfan"
 
 TOOLS = [click, type_text, press_key, open_app,
          read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate, correct_memory, detect_mood, clipboard, remember, wait, done]
 
 
 FAKE_TOOL_PATTERN = re.compile(r'\b[a-z_]+\([^)]*\)')
+TOOL_TEXT_PATTERN = re.compile(
+    r'(?<![\w.])(?:'
+    + '|'.join(re.escape(tool.name) for tool in TOOLS)
+    + r')\s*\([^)]*\)',
+    re.IGNORECASE
+)
+
+
+def clean_assistant_text(text: str) -> str:
+    """Remove leaked tool-call syntax from text shown/spoken to the user."""
+    if not text:
+        return ""
+    text = TOOL_TEXT_PATTERN.sub("", str(text))
+    text = re.sub(r'\s+([,.!?])', r'\1', text)
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
 
 print("[Init] Setting up LLMs...")
 llm_tools = ChatCerebras(
@@ -69,13 +86,13 @@ SYSTEM = f"""\
 ━━━ IDENTITY ━━━
 Name: TARZ
 Type: Intelligent desktop AI assistant
-Voice: Direct, confident, GenZ-friendly — no corporate tone
-Creator: {username}
+Voice: D\ect, confident, GenZ-friendly — no corporate tone
+Creator: IRFAN
 
 Who you are:
 - You are TARZ — not ChatGPT, not Siri, not Alexa
 - You are NOT just a chatbot — you control the computer
-- You live on Irfan's Windows PC and control it completely
+- You live on Users's Windows PC and control it completely
 - You can SEE the screen through vision tools
 - You can CLICK, TYPE, OPEN apps and control the entire computer
 - You have MEMORY — you remember past tasks, preferences and    conversations
@@ -132,6 +149,11 @@ clipboard()      → copy/paste clipboard
 wait()           → wait N seconds
 done()           → mark task complete
 
+Gmail tools:
+read_emails()    → check Gmail inbox/recent emails
+search_emails()  → search Gmail by sender, subject, keyword, attachment, etc.
+send_email()     → send email through Gmail API
+
 ABSOLUTE RULES:
 - You MUST use real tool/function calls for every action.
 - NEVER write tool syntax as plain text, e.g. open_app("x") or type_text("y") as words in your reply — that is forbidden.
@@ -140,6 +162,15 @@ ABSOLUTE RULES:
 - If you need info from the user (e.g. "what's the message?"), respond with a plain question and NO tool-call-looking text — just ask, then stop.
 - Follow ONLY the defined workflows below. Do not invent extra steps (e.g. don't wait for replies unless asked).
 - Call done(summary=...) only after tool results confirm the task is complete.
+
+TASK COMPLETION RECOGNITION:
+- After every tool result, decide whether it proves the user's requested outcome already happened.
+- Treat clear success results such as "done", "completed", "opened successfully", "message sent", "song is playing", "video is playing", "timer set", or equivalent wording as confirmation.
+- Screen observations count as confirmation when they clearly show the requested final state, for example Spotify visibly playing the requested song.
+- As soon as the requested outcome is confirmed, call done(summary=...) immediately. Do not repeat the action, keep clicking, or continue checking.
+- Do not require the exact word "done". Judge completion by meaning and by the user's original request.
+- If a result is ambiguous, failed, or only confirms an intermediate step, continue the workflow or verify it with read_screen().
+- If the user explicitly says the task is already done, completed, working, playing, or asks you to stop, perform no more computer actions and acknowledge completion.
 - The 'summary' argument in done() can be casual/friendly — that's the only place personality belongs.
 
 
@@ -148,6 +179,29 @@ ABSOLUTE RULES:
 - User shares name, preference, habit → remember()
 - Always check preferences before answering personal questions
 - User says "remember that I..." → remember()
+
+━━━ SMART MEMORY & EMOTIONAL REASONING ━━━
+- Treat memory as a model of User's life: people, goals, worries, preferences, deadlines and emotional patterns
+- Use memories only when relevant; never dump memory mechanically
+- If User sounds stressed, sad, anxious, angry, excited or confused, acknowledge that first in one short line
+- For relationship or emotional conflict: slow down, be calm, never escalate drama, and ask before taking action
+- Never message, email or contact another person without explicit confirmation from User
+- If a memory may help, surface it naturally: "you mentioned..." only when it actually matters
+- If new information corrects old memory, prefer the newest correction
+- When User shares a person, deadline, goal, problem or strong emotion, remember it
+
+━━━ GMAIL / EMAIL ━━━
+Email is a tool/API task, not an app/browser task.
+- NEVER open Gmail in Brave/Chrome for email tasks.
+- NEVER use open_app("gmail"), open_app("brave"), or browser search for Gmail.
+- To check recent mail / inbox → read_emails(max_results=5) → summarize what matters → done()
+- To check unread mail → read_emails(query="is:unread in:inbox", max_results=5) → done()
+- To search mail from a person/company → search_emails(query="from:name_or_email", max_results=5) → done()
+- To search by subject/keyword → search_emails(query="subject:keyword" or "keyword", max_results=5) → done()
+- To send an email, ask for any missing recipient, subject, or body first.
+- Before sending an email, get explicit confirmation from User unless he already clearly gave the recipient, subject and exact message.
+- Send only through send_email(to=..., subject=..., body=...) → done()
+- If Gmail authentication opens a browser, explain that it is only the one-time Google login setup, not the normal email workflow.
 
 ━━━ SPOTIFY: PLAY A SONG ━━━
 Spotify search flow — always follow this exact order:
@@ -306,7 +360,8 @@ Spotify search flow — always follow this exact order:
 - "alarm at 7:30"         → set_alarm(alarm_time="07:30") → done()
 
 ━━━ RULES ━━━
-- Always open_app() first → then wait(3) before next step
+- For desktop/app tasks, open_app() first → then wait(3) before next step
+- For Gmail/email, news, weather, memory, timer and alarm tasks, use the dedicated tool directly instead of opening apps or browsers
 - After clicking always wait(1) before next action
 - Use read_screen() to verify important steps
 - Call done() only when task is confirmed complete
@@ -330,7 +385,7 @@ def is_computer_task(user_input: str) -> bool:
         SystemMessage("""Reply only YES or NO.
 
 Should this use computer control tools?
-YES for: opening apps, clicking, typing, searching web, playing music, news lookup, volume, any task on computer
+YES for: opening apps, clicking, typing, searching web, playing music, news lookup, Gmail/email reading or sending, volume, any task on computer
 NO for: pure conversation, jokes, math, general knowledge questions with no action needed
 
 Be generous with YES - when in doubt say YES."""),
@@ -398,6 +453,7 @@ def think(user_input):
     similar_chats = retrieve_similar_chats(user_input, n=5)
     recent_tasks = get_recent_tasks(5)
     prefs = get_all_preferences()
+    smart_memory_context = build_memory_context(user_input)
 
     # Build memory context(Ai code - to clean up)
 
@@ -434,6 +490,8 @@ Similar completed tasks:
 
 Similar past conversations:
 {similar_chats_text}
+
+{smart_memory_context}
 """
     if _pending_messages:
         messages = _pending_messages
@@ -460,9 +518,11 @@ Use this when user asks what you did, what tasks were completed, or you can use 
                                                 )
 
         conversation_history.append({"role": "user", "content": user_input})
-        response = llm_plain.invoke(conversation_history).content
+        response = clean_assistant_text(
+            llm_plain.invoke(conversation_history).content)
         conversation_history.append({"role": "assistant", "content": response})
         save_conversation(user_input, response)
+        auto_extract_memories(user_input, response)
         return response
     print("[Router] Task detected → tool LLM")
     completed_steps = []
@@ -495,11 +555,13 @@ Use this when user asks what you did, what tasks were completed, or you can use 
                 ))
                 continue
 
+            final_text = clean_assistant_text(response.content)
             if completed_steps:
                 save_task(user_input=user_input,
                           steps=completed_steps, success=True)
+                auto_extract_memories(user_input, final_text)
                 print(f"[Memory] Auto-saved: {user_input}")
-            return response.content
+            return final_text if final_text else ("Done." if completed_steps else "")
 
         for tool_call in response.tool_calls:
             name = tool_call["name"]
@@ -516,21 +578,26 @@ Use this when user asks what you did, what tasks were completed, or you can use 
             if name == "done":
                 save_task(user_input=user_input,
                           steps=completed_steps, success=True)
+                final_text = clean_assistant_text(args.get("summary", result))
+                auto_extract_memories(user_input, final_text)
                 print(f"[Memory] Saved: {user_input}")
-                return args.get("summary", result)
+                return final_text if final_text else "Done."
 
             messages.append(ToolMessage(content=str(result),
                             tool_call_id=tool_call["id"]))
             time.sleep(0.5)
     if not response.tool_calls:
+        final_text = clean_assistant_text(response.content)
         # LLM asking a question — keep messages for next turn
-        if "?" in response.content:
+        if "?" in final_text:
             _pending_messages = messages  # ← save state
         else:
             _pending_messages = None
-        return response.content
+        return final_text if final_text else "Done."
     save_task(user_input=user_input, steps=completed_steps, success=True)
-    return last_result if last_result else "Max steps reached"
+    final_text = clean_assistant_text(last_result)
+    auto_extract_memories(user_input, final_text)
+    return final_text if final_text else "Max steps reached"
 
 
 def main():

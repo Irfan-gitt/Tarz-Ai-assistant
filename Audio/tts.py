@@ -4,6 +4,7 @@ Piper TTS — local, offline, real-time.
 Tuned for natural sounding output.
 """
 
+from pathlib import Path
 import subprocess
 import pygame
 import os
@@ -20,9 +21,10 @@ NOISE_W = 0.8    # variation in speaking rate — default 0.8
 
 def speak(text: str):
     text = text.replace("TARZ", "Tarz").replace("tarz", "Tarz")
+    PIPER = "configs\\piper.exe"
 
     subprocess.run([
-        "piper",
+        PIPER,
         "--model", VOICE_MODEL,
         "--output_file", "temp/output.wav",
         "--length_scale", str(LENGTH_SCALE),

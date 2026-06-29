@@ -11,12 +11,12 @@ from langchain_core.tools import tool
 # Scopes - what TARZ can do with Gmail
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.send',
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.modify'
+    'https://www.googleapis.com/auth/gmail.readonly'
 ]
 
-CREDENTIALS_FILE = "gmail_credentials.json"
-TOKEN_FILE = "gmail_token.pickle"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CREDENTIALS_FILE = os.path.join(BASE_DIR, "gmail_credentials.json")
+TOKEN_FILE = os.path.join(BASE_DIR, "gmail_token.pickle")
 
 
 def get_gmail_service():
@@ -37,9 +37,18 @@ def get_gmail_service():
             flow = InstalledAppFlow.from_client_secrets_file(
                 CREDENTIALS_FILE, SCOPES
             )
-            creds = flow.run_local_server(port=0)
+            creds = flow.run_local_server(
+                host='localhost',
+                port=8080,
+                authorization_prompt_message=(
+                    "Gmail authorization opened in your browser. "
+                    "Complete Google login, then return to TARZ."
+                ),
+                success_message=(
+                    "Gmail is connected to TARZ. You can close this tab."
+                )
+            )
 
-        # Save token for next time
         with open(TOKEN_FILE, 'wb') as f:
             pickle.dump(creds, f)
 
@@ -58,18 +67,15 @@ def send_email(to: str, subject: str, body: str) -> str:
     try:
         service = get_gmail_service()
 
-        # Create message
         message = MIMEMultipart()
         message['to'] = to
         message['subject'] = subject
         message.attach(MIMEText(body, 'plain'))
 
-        # Encode
         raw = base64.urlsafe_b64encode(
             message.as_bytes()
         ).decode()
 
-        # Send
         service.users().messages().send(
             userId='me',
             body={'raw': raw}
@@ -94,7 +100,6 @@ def read_emails(max_results: int = 5, query: str = "") -> str:
     try:
         service = get_gmail_service()
 
-        # Search emails
         results = service.users().messages().list(
             userId='me',
             maxResults=max_results,

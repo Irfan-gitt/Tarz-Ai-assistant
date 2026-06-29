@@ -4,7 +4,9 @@
 <head>
   <meta charset="UTF-8" />
   <title>TARZ</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap"
+    rel="stylesheet" />
   <style>
     * {
       margin: 0;
@@ -13,14 +15,14 @@
     }
 
     :root {
-      --bg: #0c0c0c;
-      --surface: #161616;
-      --surface2: #1e1e1e;
-      --border: #2a2a2a;
-      --border2: #333;
-      --text: #e8e8e8;
-      --muted: #666;
-      --muted2: #444;
+      --bg: #0a0a0a;
+      --surface: #111;
+      --surface2: #191919;
+      --border: #222;
+      --border2: #2e2e2e;
+      --text: #d0d0d0;
+      --muted: #555;
+      --muted2: #383838;
       --accent: #888;
       --white: #fff;
     }
@@ -41,53 +43,56 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 16px 20px;
+      padding: 14px 18px;
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
 
     .brand {
-      font-size: 0.85rem;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-      text-transform: uppercase
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: #666;
+      text-transform: uppercase;
+      font-family: 'Space Mono', monospace
     }
 
     .header-right {
       display: flex;
       align-items: center;
-      gap: 12px
+      gap: 10px
     }
 
     .model-tag {
-      font-size: 0.65rem;
+      font-size: 0.6rem;
       color: var(--muted2);
-      letter-spacing: 0.08em;
-      padding: 3px 8px;
-      border: 1px solid var(--border2);
-      border-radius: 20px;
+      letter-spacing: 0.06em;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-family: 'Space Mono', monospace
     }
 
-    /* ── Voice toggle ── */
+    /* ── Toggles ── */
     .voice-wrap {
       display: flex;
       align-items: center;
-      gap: 7px;
+      gap: 6px;
       cursor: pointer
     }
 
     .voice-label {
-      font-size: 0.65rem;
+      font-size: 0.6rem;
       color: var(--muted);
-      letter-spacing: 0.08em;
-      text-transform: uppercase
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-family: 'Space Mono', monospace
     }
 
     .switch {
       position: relative;
-      width: 30px;
-      height: 16px
+      width: 28px;
+      height: 15px
     }
 
     .switch input {
@@ -100,173 +105,110 @@
       position: absolute;
       inset: 0;
       background: var(--border2);
-      border-radius: 20px;
-      transition: 0.25s;
+      border-radius: 10px;
+      transition: 0.2s
     }
 
     .slider::before {
       content: '';
       position: absolute;
-      width: 11px;
-      height: 11px;
-      background: var(--muted);
+      width: 10px;
+      height: 10px;
+      background: #444;
       border-radius: 50%;
-      left: 2.5px;
+      left: 2px;
       top: 2.5px;
-      transition: 0.25s;
+      transition: 0.2s
     }
 
     .switch input:checked+.slider {
-      background: #333
+      background: #2e2e2e
     }
 
     .switch input:checked+.slider::before {
-      transform: translateX(14px);
-      background: var(--white)
+      transform: translateX(13px);
+      background: #aaa
     }
 
-    /* ── Main body ── */
+    /* ── Ctrl+Space hint ── */
+    .hotkey-hint {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.6rem;
+      color: var(--muted2);
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .hotkey-hint:hover {
+      border-color: #444;
+      color: #888
+    }
+
+    .hotkey-hint span {
+      color: #555
+    }
+
+    /* ── Main ── */
     .main {
       flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       overflow: hidden;
-      padding: 0 20px
+      padding: 0 18px
     }
 
-    /* ── Orb / graphic ── */
-    .orb-wrap {
+    /* ── Planet wrap ── */
+    .planet-wrap {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      padding: 28px 0 18px;
+      padding: 18px 0 8px;
       flex-shrink: 0;
-      transition: all 0.4s;
+      transition: all 0.4s
     }
 
-    .orb-wrap.has-messages {
-      padding: 12px 0 8px
+    .planet-wrap.has-messages {
+      padding: 6px 0 4px
     }
 
-    .orb-wrap.has-messages .orb-outer {
-      width: 48px;
-      height: 48px
+    .planet-wrap.has-messages svg {
+      width: 52px !important;
+      height: 52px !important
     }
 
-    .orb-wrap.has-messages .orb-ring {
-      width: 64px;
-      height: 64px
-    }
-
-    .orb-wrap.has-messages .orb-tagline {
+    .planet-wrap.has-messages .planet-tagline {
       display: none
     }
 
-    .orb-ring {
-      width: 120px;
-      height: 120px;
-      border-radius: 50%;
-      background: conic-gradient(from 0deg, #222, #3a3a3a, #222, #2e2e2e, #222);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      animation: spin 8s linear infinite;
-      box-shadow: 0 0 40px rgba(255, 255, 255, 0.04);
-      transition: all 0.4s;
-    }
-
-    @keyframes spin {
-      to {
-        transform: rotate(360deg)
-      }
-    }
-
-    .orb-outer {
-      width: 96px;
-      height: 96px;
-      border-radius: 50%;
-      background: radial-gradient(circle at 35% 35%, #2e2e2e, #1a1a1a 40%, #0c0c0c);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: inset 0 2px 8px rgba(255, 255, 255, 0.05), 0 8px 32px rgba(0, 0, 0, 0.6);
-      animation: breathe 4s ease-in-out infinite;
-      transition: all 0.4s;
-    }
-
-    @keyframes breathe {
-
-      0%,
-      100% {
-        box-shadow: inset 0 2px 8px rgba(255, 255, 255, 0.05), 0 8px 32px rgba(0, 0, 0, 0.6)
-      }
-
-      50% {
-        box-shadow: inset 0 2px 12px rgba(255, 255, 255, 0.08), 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 60px rgba(255, 255, 255, 0.02)
-      }
-    }
-
-    .orb-dots {
-      display: flex;
-      gap: 5px
-    }
-
-    .orb-dot {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: #333;
-      animation: pulse 2s ease-in-out infinite;
-    }
-
-    .orb-dot:nth-child(2) {
-      animation-delay: .3s;
-      background: #2e2e2e
-    }
-
-    .orb-dot:nth-child(3) {
-      animation-delay: .6s;
-      background: #2a2a2a
-    }
-
-    @keyframes pulse {
-
-      0%,
-      100% {
-        transform: scale(1);
-        opacity: 0.6
-      }
-
-      50% {
-        transform: scale(1.4);
-        opacity: 1
-      }
-    }
-
-    .orb-tagline {
-      font-size: 0.72rem;
+    .planet-tagline {
+      font-size: 0.62rem;
       color: var(--muted2);
-      letter-spacing: 0.12em;
-      margin-top: 14px;
-      text-transform: uppercase
+      letter-spacing: 0.14em;
+      margin-top: 10px;
+      text-transform: uppercase;
+      font-family: 'Space Mono', monospace
     }
 
-    /* ── Chat messages ── */
+    /* ── Chat ── */
     .chat {
       width: 100%;
-      max-width: 580px;
+      max-width: 560px;
       flex: 1;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 2px;
-      padding: 4px 0 8px;
+      padding: 4px 0 6px
     }
 
     .chat::-webkit-scrollbar {
-      width: 3px
+      width: 2px
     }
 
     .chat::-webkit-scrollbar-thumb {
@@ -274,14 +216,14 @@
     }
 
     .msg {
-      padding: 8px 0;
-      animation: fadeIn 0.25s ease
+      padding: 6px 0;
+      animation: fi 0.2s ease
     }
 
-    @keyframes fadeIn {
+    @keyframes fi {
       from {
         opacity: 0;
-        transform: translateY(6px)
+        transform: translateY(5px)
       }
 
       to {
@@ -291,27 +233,28 @@
     }
 
     .msg-sender {
-      font-size: 0.65rem;
+      font-size: 0.58rem;
       color: var(--muted2);
-      letter-spacing: 0.1em;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      margin-bottom: 4px
+      margin-bottom: 3px;
+      font-family: 'Space Mono', monospace
     }
 
     .msg.tarz .msg-sender {
-      color: var(--accent)
+      color: #555
     }
 
     .bubble {
       display: inline-block;
-      max-width: 88%;
-      padding: 10px 14px;
-      border-radius: 10px;
-      font-size: 0.88rem;
-      line-height: 1.65;
+      max-width: 90%;
+      padding: 9px 13px;
+      border-radius: 8px;
+      font-size: 0.87rem;
+      line-height: 1.6;
       color: var(--text);
       white-space: pre-wrap;
-      word-wrap: break-word;
+      word-wrap: break-word
     }
 
     .msg.tarz .bubble {
@@ -330,23 +273,28 @@
       text-align: right
     }
 
+    .msg.cancelled .bubble {
+      color: var(--muted);
+      font-style: italic
+    }
+
     /* ── Thinking ── */
     .thinking {
-      padding: 8px 0
+      padding: 6px 0
     }
 
     .thinking-dots {
       display: flex;
-      gap: 5px;
+      gap: 4px;
       align-items: center
     }
 
     .thinking-dot {
-      width: 5px;
-      height: 5px;
+      width: 4px;
+      height: 4px;
       border-radius: 50%;
       background: var(--muted2);
-      animation: tpulse 1.2s ease-in-out infinite;
+      animation: tp 1.2s ease-in-out infinite
     }
 
     .thinking-dot:nth-child(2) {
@@ -357,13 +305,13 @@
       animation-delay: .4s
     }
 
-    @keyframes tpulse {
+    @keyframes tp {
 
       0%,
       80%,
       100% {
         transform: scale(0.7);
-        opacity: 0.4
+        opacity: 0.3
       }
 
       40% {
@@ -372,24 +320,24 @@
       }
     }
 
-    /* ── Input area (centered) ── */
+    /* ── Input ── */
     .input-area {
       width: 100%;
-      max-width: 580px;
-      padding: 12px 0 20px;
-      flex-shrink: 0;
+      max-width: 560px;
+      padding: 10px 0 16px;
+      flex-shrink: 0
     }
 
     .input-box {
       background: var(--surface);
       border: 1px solid var(--border2);
-      border-radius: 14px;
+      border-radius: 12px;
       overflow: hidden;
-      transition: border-color 0.2s;
+      transition: border-color 0.2s
     }
 
     .input-box:focus-within {
-      border-color: #444
+      border-color: #3a3a3a
     }
 
     .input-row {
@@ -406,12 +354,12 @@
       outline: none;
       color: var(--text);
       font-family: 'Inter', sans-serif;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       resize: none;
-      min-height: 24px;
-      max-height: 120px;
+      min-height: 22px;
+      max-height: 110px;
       line-height: 1.5;
-      padding: 2px 8px 2px 0;
+      padding: 2px 8px 2px 0
     }
 
     #textInput::placeholder {
@@ -421,14 +369,14 @@
     .input-actions {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       flex-shrink: 0
     }
 
     .action-btn {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
       border: none;
       background: transparent;
       cursor: pointer;
@@ -436,7 +384,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: all 0.2s;
+      transition: all 0.2s
     }
 
     .action-btn:hover {
@@ -444,31 +392,14 @@
       color: var(--text)
     }
 
+    .action-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed
+    }
+
     .action-btn svg {
-      width: 16px;
-      height: 16px
-    }
-
-    .mic-btn.on {
-      color: var(--white)
-    }
-
-    .mic-btn.recording {
-      color: var(--white);
-      background: #2a2a2a;
-      animation: mic-pulse 1s infinite
-    }
-
-    @keyframes mic-pulse {
-
-      0%,
-      100% {
-        background: #2a2a2a
-      }
-
-      50% {
-        background: #333
-      }
+      width: 15px;
+      height: 15px
     }
 
     .send-btn {
@@ -476,38 +407,73 @@
       color: var(--text)
     }
 
-    .send-btn:hover {
-      background: #2e2e2e
+    /* ── Stop button ── */
+    .stop-btn {
+      display: none;
+      background: #1e1e1e;
+      color: #888;
+      border: 1px solid #333
+    }
+
+    .stop-btn.visible {
+      display: flex
+    }
+
+    .stop-btn:hover {
+      background: #2a2a2a;
+      color: #bbb
     }
 
     .input-hint {
-      font-size: 0.6rem;
+      font-size: 0.58rem;
       color: var(--muted2);
-      padding: 6px 14px 10px;
+      padding: 5px 13px 9px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       border-top: 1px solid var(--border);
+      font-family: 'Space Mono', monospace
     }
 
     .hint-key {
-      padding: 1px 5px;
+      padding: 1px 4px;
       border: 1px solid var(--border2);
-      border-radius: 3px;
-      font-size: 0.58rem;
+      border-radius: 2px;
+      font-size: 0.56rem;
       color: var(--muted2);
-      margin: 0 2px;
+      margin: 0 2px
+    }
+
+    #micStatus {
+      color: var(--muted2)
+    }
+
+    #micStatus.active {
+      color: #888
     }
   </style>
 </head>
 
 <body>
 
-  <!-- Header -->
   <div class="header">
     <div class="brand">TARZ</div>
     <div class="header-right">
       <div class="model-tag">CEREBRAS · GPT-4o</div>
+
+      <!-- Ctrl+Space hotkey hint / trigger -->
+      <div class="hotkey-hint" id="ctrlSpaceBtn" title="Hold Ctrl+Space to talk">
+        <span>⌨</span> Ctrl+Space
+      </div>
+
+      <label class="voice-wrap">
+        <span class="voice-label">Listen</span>
+        <span class="switch">
+          <input type="checkbox" id="listenToggle" />
+          <span class="slider"></span>
+        </span>
+      </label>
+
       <label class="voice-wrap">
         <span class="voice-label">Voice</span>
         <span class="switch">
@@ -518,42 +484,205 @@
     </div>
   </div>
 
-  <!-- Main -->
   <div class="main">
 
-    <!-- Orb -->
-    <div class="orb-wrap" id="orbWrap">
-      <div class="orb-ring">
-        <div class="orb-outer">
-          <div class="orb-dots">
-            <div class="orb-dot"></div>
-            <div class="orb-dot"></div>
-            <div class="orb-dot"></div>
-          </div>
-        </div>
-      </div>
-      <div class="orb-tagline">Ask me anything</div>
+    <!-- Pixel planet (grey/black hacker theme) -->
+    <div class="planet-wrap" id="orbWrap">
+      <svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg"
+        style="width:150px;height:150px;image-rendering:pixelated;animation:fl 6s ease-in-out infinite">
+        <style>
+          @keyframes fl {
+
+            0%,
+            100% {
+              transform: translateY(0)
+            }
+
+            50% {
+              transform: translateY(-5px)
+            }
+          }
+        </style>
+        <defs>
+          <clipPath id="pc">
+            <circle cx="72" cy="72" r="38" />
+          </clipPath>
+        </defs>
+
+        <!-- Stars -->
+        <rect x="5" y="12" width="2" height="2" fill="#aaa" />
+        <rect x="20" y="40" width="1" height="1" fill="#888" />
+        <rect x="36" y="8" width="2" height="2" fill="#ccc" />
+        <rect x="52" y="18" width="1" height="1" fill="#666" />
+        <rect x="14" y="138" width="2" height="2" fill="#aaa" />
+        <rect x="30" y="122" width="1" height="1" fill="#777" />
+        <rect x="46" y="148" width="2" height="1" fill="#555" />
+        <rect x="120" y="58" width="2" height="2" fill="#ccc" />
+        <rect x="142" y="38" width="1" height="1" fill="#888" />
+        <rect x="154" y="54" width="2" height="2" fill="#aaa" />
+        <rect x="150" y="76" width="1" height="1" fill="#666" />
+        <rect x="118" y="148" width="2" height="2" fill="#bbb" />
+        <rect x="148" y="146" width="1" height="1" fill="#777" />
+        <rect x="8" y="98" width="1" height="1" fill="#666" />
+        <rect x="22" y="88" width="2" height="1" fill="#999" />
+        <rect x="12" y="64" width="1" height="1" fill="#555" />
+        <rect x="112" y="10" width="2" height="2" fill="#bbb" />
+        <rect x="102" y="144" width="1" height="1" fill="#777" />
+        <rect x="156" y="18" width="1" height="1" fill="#666" />
+        <rect x="154" y="100" width="2" height="2" fill="#aaa" />
+        <rect x="62" y="4" width="1" height="1" fill="#444" />
+        <rect x="90" y="10" width="1" height="1" fill="#333" />
+        <rect x="78" y="148" width="1" height="1" fill="#444" />
+        <rect x="4" y="76" width="1" height="1" fill="#333" />
+        <rect x="158" y="138" width="1" height="1" fill="#444" />
+        <rect x="42" y="38" width="1" height="1" fill="#333" />
+        <rect x="116" y="132" width="1" height="1" fill="#2e2e2e" />
+
+        <!-- Milky way pixels (dim) -->
+        <rect x="2" y="8" width="2" height="1" fill="#1e1e1e" />
+        <rect x="6" y="4" width="1" height="1" fill="#1a1a1a" />
+        <rect x="10" y="12" width="2" height="1" fill="#1c1c1c" />
+        <rect x="14" y="6" width="1" height="2" fill="#1e1e1e" />
+        <rect x="18" y="2" width="2" height="1" fill="#1a1a1a" />
+        <rect x="8" y="18" width="2" height="2" fill="#1c1c1c" />
+        <rect x="136" y="118" width="1" height="2" fill="#1a1a1a" />
+        <rect x="142" y="106" width="2" height="1" fill="#1c1c1c" />
+        <rect x="148" y="114" width="1" height="1" fill="#1e1e1e" />
+        <rect x="138" y="138" width="2" height="1" fill="#1a1a1a" />
+
+        <!-- Shooting star -->
+        <rect x="126" y="46" width="4" height="1" fill="#555" opacity="0.7" />
+        <rect x="130" y="47" width="3" height="1" fill="#444" opacity="0.5" />
+        <rect x="133" y="48" width="2" height="1" fill="#333" opacity="0.3" />
+
+        <!-- Small moon -->
+        <circle cx="128" cy="28" r="8" fill="#111" />
+        <rect x="121" y="21" width="14" height="14" fill="#1a1a1a" clip-path="url(#pc2)" />
+        <rect x="122" y="23" width="3" height="2" fill="#141414" />
+        <rect x="128" y="30" width="4" height="2" fill="#141414" />
+        <rect x="132" y="23" width="2" height="2" fill="#111" />
+        <rect x="120" y="20" width="4" height="2" fill="#222" />
+        <rect x="134" y="20" width="4" height="18" fill="#000" opacity="0.5" />
+        <circle cx="128" cy="28" r="8" fill="none" stroke="#222" stroke-width="1" />
+
+        <!-- Planet body shadow base -->
+        <circle cx="72" cy="72" r="38" fill="#0a0a0a" />
+
+        <!-- Planet pixel bands (grey/black hacker) -->
+        <g clip-path="url(#pc)">
+          <!-- Base fill -->
+          <rect x="34" y="34" width="76" height="76" fill="#111" />
+
+          <!-- North polar band -->
+          <rect x="34" y="34" width="76" height="9" fill="#555" />
+          <rect x="34" y="40" width="76" height="2" fill="#484848" opacity="0.8" />
+
+          <!-- Band 1 dark -->
+          <rect x="34" y="43" width="76" height="8" fill="#222" />
+          <rect x="34" y="47" width="76" height="2" fill="#1c1c1c" opacity="0.8" />
+
+          <!-- Band 2 light -->
+          <rect x="34" y="51" width="76" height="10" fill="#3a3a3a" />
+          <rect x="34" y="57" width="76" height="2" fill="#444" opacity="0.5" />
+
+          <!-- Band 3 dark (equatorial) -->
+          <rect x="34" y="61" width="76" height="10" fill="#181818" />
+          <rect x="34" y="66" width="76" height="2" fill="#141414" opacity="0.7" />
+
+          <!-- Band 4 mid -->
+          <rect x="34" y="71" width="76" height="8" fill="#2e2e2e" />
+
+          <!-- Band 5 dark -->
+          <rect x="34" y="79" width="76" height="7" fill="#1a1a1a" />
+
+          <!-- South polar band -->
+          <rect x="34" y="86" width="76" height="24" fill="#484848" />
+          <rect x="34" y="86" width="76" height="2" fill="#555" opacity="0.9" />
+
+          <!-- Pixel cloud streaks (grey) -->
+          <rect x="36" y="45" width="12" height="2" fill="#666" opacity="0.5" />
+          <rect x="56" y="44" width="16" height="2" fill="#777" opacity="0.4" />
+          <rect x="82" y="46" width="10" height="1" fill="#666" opacity="0.5" />
+          <rect x="36" y="53" width="8" height="2" fill="#555" opacity="0.4" />
+          <rect x="56" y="52" width="18" height="2" fill="#666" opacity="0.5" />
+          <rect x="82" y="53" width="12" height="2" fill="#555" opacity="0.4" />
+          <rect x="36" y="72" width="10" height="2" fill="#444" opacity="0.4" />
+          <rect x="58" y="71" width="14" height="2" fill="#555" opacity="0.5" />
+          <rect x="80" y="73" width="8" height="2" fill="#444" opacity="0.4" />
+          <rect x="38" y="81" width="14" height="2" fill="#333" opacity="0.5" />
+          <rect x="64" y="80" width="10" height="2" fill="#444" opacity="0.4" />
+
+          <!-- Pixel surface details (continent-like) -->
+          <rect x="42" y="55" width="5" height="4" fill="#282828" opacity="0.7" />
+          <rect x="52" y="57" width="4" height="5" fill="#222" opacity="0.7" />
+          <rect x="62" y="72" width="7" height="4" fill="#252525" opacity="0.7" />
+          <rect x="74" y="74" width="5" height="4" fill="#1e1e1e" opacity="0.7" />
+          <rect x="90" y="55" width="8" height="5" fill="#282828" opacity="0.7" />
+          <rect x="95" y="71" width="5" height="4" fill="#222" opacity="0.7" />
+
+          <!-- Storm pixel detail -->
+          <rect x="76" y="64" width="8" height="4" fill="#141414" opacity="0.8" />
+          <rect x="78" y="65" width="5" height="2" fill="#111" opacity="0.9" />
+
+          <!-- Terminator line (day/night) -->
+          <rect x="92" y="34" width="18" height="76" fill="#000" opacity="0.6" />
+          <rect x="88" y="34" width="5" height="76" fill="#000" opacity="0.28" />
+
+          <!-- Highlight top-left -->
+          <rect x="34" y="34" width="20" height="14" fill="#fff" opacity="0.025" />
+
+          <!-- Scan lines (hacker aesthetic) -->
+          <rect x="34" y="36" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="40" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="44" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="48" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="52" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="56" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="60" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="64" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="68" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="72" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="76" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="80" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="84" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="88" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="92" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="96" width="76" height="1" fill="#000" opacity="0.15" />
+          <rect x="34" y="100" width="76" height="1" fill="#000" opacity="0.15" />
+        </g>
+
+        <!-- Atmosphere rings (grey) -->
+        <circle cx="72" cy="72" r="38" fill="none" stroke="#2a2a2a" stroke-width="3" opacity="0.6" />
+        <circle cx="72" cy="72" r="40" fill="none" stroke="#1e1e1e" stroke-width="2" opacity="0.4" />
+        <circle cx="72" cy="72" r="42" fill="none" stroke="#141414" stroke-width="1" opacity="0.3" />
+
+        <!-- Ring -->
+        <ellipse cx="72" cy="72" rx="56" ry="14" fill="none" stroke="#333" stroke-width="3" opacity="0.35" />
+        <ellipse cx="72" cy="72" rx="50" ry="11" fill="none" stroke="#2a2a2a" stroke-width="2" opacity="0.3" />
+        <!-- Ring pixel details -->
+        <rect x="20" y="70" width="4" height="2" fill="#222" opacity="0.6" />
+        <rect x="24" y="72" width="4" height="1" fill="#2a2a2a" opacity="0.5" />
+        <rect x="116" y="70" width="4" height="2" fill="#222" opacity="0.6" />
+        <rect x="112" y="72" width="4" height="1" fill="#2a2a2a" opacity="0.5" />
+      </svg>
+      <div class="planet-tagline">// ask me anything</div>
     </div>
 
-    <!-- Chat -->
     <div class="chat" id="chat"></div>
 
-    <!-- Input -->
     <div class="input-area">
       <div class="input-box">
         <div class="input-row">
           <textarea id="textInput" rows="1" placeholder="Message TARZ..."></textarea>
           <div class="input-actions">
-            <button class="action-btn mic-btn" id="micBtn" title="Voice input">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                stroke-linejoin="round">
-                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" y1="19" x2="12" y2="23" />
-                <line x1="8" y1="23" x2="16" y2="23" />
+            <!-- Stop/cancel button (shown while thinking) -->
+            <button class="action-btn stop-btn" id="stopBtn" title="Stop">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="1" />
               </svg>
             </button>
-            <button class="action-btn send-btn" id="sendBtn" title="Send">
+            <!-- Send button -->
+            <button class="action-btn send-btn" id="sendBtn" title="Send  (Enter)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                 stroke-linejoin="round">
                 <line x1="12" y1="19" x2="12" y2="5" />
@@ -563,9 +692,12 @@
           </div>
         </div>
         <div class="input-hint">
-          <span><span class="hint-key">Enter</span> to send &nbsp;·&nbsp; <span class="hint-key">Shift+Enter</span> new
-            line</span>
-          <span id="micStatus">Click mic to talk</span>
+          <span>
+            <span class="hint-key">Enter</span> send &nbsp;·&nbsp;
+            <span class="hint-key">Shift+Enter</span> newline &nbsp;·&nbsp;
+            <span class="hint-key">Ctrl+Space</span> talk
+          </span>
+          <span id="micStatus">voice off</span>
         </div>
       </div>
     </div>
@@ -576,35 +708,49 @@
     const chat = document.getElementById('chat');
     const textInput = document.getElementById('textInput');
     const sendBtn = document.getElementById('sendBtn');
-    const micBtn = document.getElementById('micBtn');
+    const stopBtn = document.getElementById('stopBtn');
     const voiceToggle = document.getElementById('voiceToggle');
+    const listenToggle = document.getElementById('listenToggle');
+    const ctrlSpaceBtn = document.getElementById('ctrlSpaceBtn');
     const orbWrap = document.getElementById('orbWrap');
     const micStatus = document.getElementById('micStatus');
+
     let isListening = false;
+    let listenMode = false;
+    let isSending = false;
+    let cancelled = false;
     let hasMessages = false;
 
     // Auto-resize textarea
     textInput.addEventListener('input', () => {
       textInput.style.height = 'auto';
-      textInput.style.height = Math.min(textInput.scrollHeight, 120) + 'px';
+      textInput.style.height = Math.min(textInput.scrollHeight, 110) + 'px';
     });
 
-    // Enter to send, Shift+Enter for newline
+    // Enter = send, Shift+Enter = newline
     textInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
 
-    function addMessage(text, sender) {
+    // Ctrl+Space = voice input (keyboard shortcut)
+    document.addEventListener('keydown', e => {
+      if (e.ctrlKey && e.code === 'Space') {
+        e.preventDefault();
+        if (!isListening) triggerVoice();
+      }
+    });
+    ctrlSpaceBtn.addEventListener('click', () => {
+      if (!isListening) triggerVoice();
+    });
+
+    function addMessage(text, sender, extra = '') {
       if (!hasMessages) {
         hasMessages = true;
         orbWrap.classList.add('has-messages');
       }
       const div = document.createElement('div');
-      div.className = `msg ${sender}`;
-      div.innerHTML = `
-    <div class="msg-sender">${sender === 'tarz' ? 'Tarz' : 'You'}</div>
-    <div class="bubble"></div>
-  `;
+      div.className = `msg ${sender} ${extra}`;
+      div.innerHTML = `<div class="msg-sender">${sender === 'tarz' ? 'tarz' : 'you'}</div><div class="bubble"></div>`;
       div.querySelector('.bubble').textContent = text;
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
@@ -612,9 +758,8 @@
 
     function showThinking() {
       const div = document.createElement('div');
-      div.className = 'thinking';
-      div.id = 'thinking';
-      div.innerHTML = `<div class="msg-sender">Tarz</div>
+      div.className = 'thinking'; div.id = 'thinking';
+      div.innerHTML = `<div class="msg-sender">tarz</div>
     <div class="thinking-dots">
       <div class="thinking-dot"></div>
       <div class="thinking-dot"></div>
@@ -623,50 +768,97 @@
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
+    function hideThinking() { const e = document.getElementById('thinking'); if (e) e.remove(); }
 
-    function hideThinking() {
-      const el = document.getElementById('thinking');
-      if (el) el.remove();
+    function setThinkingState(on) {
+      isSending = on;
+      sendBtn.disabled = on;
+      if (on) { stopBtn.classList.add('visible'); }
+      else { stopBtn.classList.remove('visible'); }
     }
 
     async function sendMessage() {
       const text = textInput.value.trim();
-      if (!text) return;
+      if (!text || isSending) return;
+
       addMessage(text, 'user');
       textInput.value = '';
       textInput.style.height = 'auto';
-      sendBtn.disabled = true;
+      cancelled = false;
+      setThinkingState(true);
       showThinking();
 
       const result = await window.pywebview.api.send_message(text);
+
       hideThinking();
-      addMessage(result, 'tarz');
-      sendBtn.disabled = false;
+      setThinkingState(false);
+
+      if (cancelled) {
+        addMessage('Cancelled.', 'tarz', 'cancelled');
+        cancelled = false;
+      } else {
+        addMessage(result, 'tarz');
+        if (listenMode) startListening();
+      }
     }
+
+    // Stop button
+    stopBtn.addEventListener('click', () => {
+      cancelled = true;
+      window.pywebview.api.cancel_thinking();
+      hideThinking();
+      setThinkingState(false);
+    });
 
     sendBtn.addEventListener('click', sendMessage);
 
+    // Voice toggle
     voiceToggle.addEventListener('change', () => {
       window.pywebview.api.set_tts(voiceToggle.checked);
     });
 
-    micBtn.addEventListener('click', async () => {
-      if (isListening) return;
+    // Listen toggle (continuous mode)
+    listenToggle.addEventListener('change', () => {
+      listenMode = listenToggle.checked;
+      window.pywebview.api.set_listen(listenMode);
+      if (listenMode) {
+        micStatus.textContent = '● listening';
+        micStatus.classList.add('active');
+        startListening();
+      } else {
+        micStatus.textContent = 'voice off';
+        micStatus.classList.remove('active');
+        isListening = false;
+      }
+    });
+
+    // Ctrl+Space one-shot voice
+    async function triggerVoice() {
+      if (isListening || isSending) return;
       isListening = true;
-      micBtn.classList.add('recording');
-      micStatus.textContent = 'Listening...';
+      micStatus.textContent = '● listening';
+      micStatus.classList.add('active');
 
       const text = await window.pywebview.api.start_voice();
 
-      micBtn.classList.remove('recording');
       isListening = false;
-      micStatus.textContent = 'Click mic to talk';
-
-      if (text) {
-        textInput.value = text;
-        sendMessage();
+      if (!listenMode) {
+        micStatus.textContent = 'voice off';
+        micStatus.classList.remove('active');
       }
-    });
+      if (text) { textInput.value = text; sendMessage(); }
+    }
+
+    // Continuous listen loop
+    async function startListening() {
+      if (!listenMode || isListening) return;
+      isListening = true;
+      const text = await window.pywebview.api.start_voice();
+      isListening = false;
+      if (!listenMode) return;
+      if (text) { textInput.value = text; await sendMessage(); }
+      else { startListening(); }
+    }
   </script>
 </body>
 
