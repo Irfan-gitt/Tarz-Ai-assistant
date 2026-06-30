@@ -98,7 +98,8 @@ def correct_memory(key: str, correct_value: str) -> str:
     correct_memory(key='favourite_song', correct_value='Sailor Song')
     """
     save_preference(key, correct_value)
-    save_memory("preference", key, correct_value, importance=9, source="correction")
+    save_memory("preference", key, correct_value,
+                importance=9, source="correction")
     return f"Corrected: {key} = {correct_value}"
 
 

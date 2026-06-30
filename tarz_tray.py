@@ -5,14 +5,14 @@ import pystray
 from PIL import Image, ImageDraw
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_gui_proc = None          # track the running GUI process
+_gui_proc = None
 _gui_lock = threading.Lock()
 
 
 def open_gui():
     global _gui_proc
     with _gui_lock:
-        # If already running — don't open another
+
         if _gui_proc is not None and _gui_proc.poll() is None:
             print("[Tray] GUI already open, skipping")
             return
@@ -42,7 +42,7 @@ def quit_tarz(icon, item):
 
 
 def main():
-    # Open GUI once on startup
+
     launch_gui()
 
     icon = pystray.Icon(

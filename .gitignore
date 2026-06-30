@@ -41,3 +41,4 @@ Audio/wakeword_data/
 *.onnx.json
 piper.exe
 configs/
+Playground
