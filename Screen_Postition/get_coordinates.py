@@ -1,4 +1,12 @@
 import pyautogui
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="'pin_memory' argument is set as true but no accelerator is found.*",
+    category=UserWarning,
+)
+
 import easyocr
 from dotenv import load_dotenv
 from Screen_Postition.grid_finder import click as grid_click

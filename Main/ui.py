@@ -50,7 +50,7 @@ if __name__ == "__main__":
     window = webview.create_window(
         "TARZ", html_path,
         js_api=api,
-        width=500, height=700,
+        width=900, height=700,
         resizable=True,
         background_color="#0a0a0a"
     )

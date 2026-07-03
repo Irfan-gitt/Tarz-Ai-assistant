@@ -49,6 +49,7 @@ from Tools.news import search_news   # noqa
 print("[Actions] 9 - langchain tools...")  # noqa
 from langchain_core.tools import tool  # noqa
 
+
 print("[Actions] All imports done ✓")  # noqa
 load_dotenv()
 

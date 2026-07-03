@@ -21,8 +21,7 @@ GEMINI_KEYS = [
     os.getenv("GEMINI_KEY_1"),
     os.getenv("GEMINI_KEY_2"),
     os.getenv("GEMINI_KEY_3"),
-    os.getenv("GEMINI_KEY_4"),
-    os.getenv("GEMINI_KEY_5"),
+
 ]
 GEMINI_KEYS = [k for k in GEMINI_KEYS if k]  # remove empty
 

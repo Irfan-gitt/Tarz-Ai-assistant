@@ -18,7 +18,7 @@ Along the way I picked up real concepts — RAG (retrieval-augmented generation)
 
 ## ⚠️ This Is a Prototype (v1)
 
-Please read this before judging it too harshly.
+
 
 TARZ works, and I use it daily, but it is an early, rough version built by one curious person with AI as a coding partner — not a polished commercial product. Specifically:
 
@@ -29,8 +29,23 @@ TARZ works, and I use it daily, but it is an early, rough version built by one c
 - **Expect occasional bugs.** This was shipped intentionally early rather than polished indefinitely — building momentum mattered more than perfection.
 
 If you hit bugs, that's expected at this stage. Feel free to fork it, fix things, and make it your own.
+nb : maybe covered by bugs 🌚
 
 ---
+
+## Budget-Friendly by Design
+
+TARZ is built to run entirely on **free API tiers** — no subscriptions, no paid plans, no credit card required to get started. Every service used (Groq, Gemini, Cerebras, GitHub Models, OpenWeatherMap) has a generous free tier that covers normal daily use.
+
+This is intentional. The goal was to build something genuinely useful that anyone can run without spending money.
+
+**The trade-off is latency.** Free-tier APIs have rate limits and occasional queuing delays, which means TARZ sometimes pauses a second or two between steps when processing complex tasks. If you want a faster, near-real-time experience:
+
+- Replace the free Groq/Cerebras calls with a paid OpenAI or Anthropic API key (just swap the model in `Main/tarz.py`)
+- Use a local model via Ollama (already partially supported — `langchain-ollama` is in the stack)
+- Host your own inference endpoint
+
+But for most everyday use — playing music, checking weather, sending messages, quick conversations — the free tier is perfectly fine and the latency is barely noticeable. The point was to prove you don't need to pay to build something like this.
 
 ## What TARZ Can Do
 
@@ -51,7 +66,10 @@ If you hit bugs, that's expected at this stage. Feel free to fork it, fix things
 
 ---
 
+
 ## Gmail Setup (Optional)
+
+Gmail is optional. If you do not add `Tools/gmail_credentials.json`, TARZ will still run normally; Gmail commands will simply reply that email is not configured yet.
 
 1. Go to https://console.cloud.google.com
 2. Create new project
@@ -67,7 +85,38 @@ If you hit bugs, that's expected at this stage. Feel free to fork it, fix things
 6. First run opens browser automatically for login
 7. After login, token saved — no login needed again
 
-Note: Without gmail_credentials.json in Tools/, Gmail tools are disabled automatically.
+
+## Google Calendar Setup for TARZ (Optional)
+
+Calendar is optional. If you do not configure Google credentials, TARZ will still run normally; calendar commands will reply that calendar is not configured yet.
+
+ 1. Enable Calendar API
+
+ 2. Go to https://console.cloud.google.com
+    Select your existing project (same one used for Gmail)
+    APIs & Services → Library → search "Google Calendar API" → Enable
+
+3. Reuse existing OAuth credentials
+If you already set up Gmail, you can reuse the same gmail_credentials.json — just add the Calendar scope (Step 4 below). If not:
+
+4. APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID
+Application type: Desktop app
+Download JSON → rename to gmail_credentials.json
+Place inside the Tools/ folder
+
+5. Add yourself as test user
+OAuth consent screen → Test users → Add your Gmail address
+
+TARZ can now:
+
+- 📅 Read calendar events
+- ➕ Create events
+- ✏️ Update events
+- ❌ Delete events
+- 📆 List upcoming schedules
+
+
+
 
 ## Tech Stack
 
@@ -255,6 +304,12 @@ Right-click the tray icon for **Open TARZ** (reopen the window) or **Quit**.
 
 ---
 
+## Important message
+
+- It may take sometime to execute, especially to find screen position and clicking with curser, if its taking too long restart the app
+- Cursor clicks can be inaccurate when clicking on ui elements sometimes 
+- If you give Tarz a task like play a specific song of spotify or any thing , dont interrupt with keyborad or hovering mouse it can make the ai to take more time or fail to execute
+
 ## What's Next (Roadmap)
 
 - Smarter, properly-tuned RAG memory (in progress — I'm learning this properly now)
@@ -269,3 +324,7 @@ Right-click the tray icon for **Open TARZ** (reopen the window) or **Quit**.
 ## A Closing Note
 
 This is a personal, evolving project — built by someone learning in public with AI as a collaborator, not a finished product from a team. If something breaks, that's part of the deal at this stage. Fork it, break it further, fix it, learn from it — that's exactly how this project came to exist in the first place.
+
+If there is any errors during the cloning or try to run Tarz I know you are going to fix it cause you are a dev ,, 
+
+Seeeyaa 🙂‍↔️👋...

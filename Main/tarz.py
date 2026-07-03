@@ -4,6 +4,7 @@ import os  # noqa
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 import time
 import os
+from datetime import datetime
 from PIL import Image
 from openai import OpenAI
 from groq import Groq
@@ -16,7 +17,8 @@ from Prompts.prompt import SYSTEM_PROMPT
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Tools.gmail import send_email, read_emails, search_emails
-
+from Tools.calendar import create_event, list_events, delete_event
+from Tools.real_time_data import rt_data
 from Audio.stt import listen as stt_listen
 from Audio.tts import speak
 print("on tools")  # noqa
@@ -36,7 +38,7 @@ api_cb = os.getenv("CEREBRAS_API_KEY")
 
 
 TOOLS = [click, type_text, press_key, open_app,
-         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate, correct_memory, detect_mood, clipboard, remember, wait, done]
+         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate, correct_memory, rt_data, detect_mood, clipboard, create_event, list_events, delete_event, remember, wait, done]
 
 
 FAKE_TOOL_PATTERN = re.compile(r'\b[a-z_]+\([^)]*\)')
@@ -57,6 +59,27 @@ def clean_assistant_text(text: str) -> str:
     text = re.sub(r'[ \t]{2,}', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
+
+
+def should_use_tool_router(user_input: str) -> bool:
+    """Fast keyword router for tool tasks the LLM router often mislabels as chat."""
+    text = user_input.lower()
+
+    calendar_keywords = [
+        "calendar", "schedule", "appointment", "meeting", "event",
+        "remind me on", "what's on my calendar", "upcoming events",
+        "delete event", "cancel meeting",
+    ]
+    realtime_keywords = [
+        "today's date", "todays date", "what date", "current date",
+        "what day is it", "current time", "what time is it",
+        "latest", "current", "right now", "today", "yesterday",
+        "tomorrow", "price", "exchange rate", "stock", "crypto",
+        "who is the president", "who is the prime minister",
+        "ceo of", "released", "ipl", "score", "points table",
+    ]
+
+    return any(k in text for k in calendar_keywords + realtime_keywords)
 
 
 print("[Init] Setting up LLMs...")
@@ -138,7 +161,12 @@ use_shortcut()   → in-app shortcuts
 read_screen()    → see what's on screen
 volume_control() → system volume up/down/mute
 news_update()    → fetch latest news
+rt_data()        → use for real time update (example: who is the pm of india , What is today's date? ,
+What happened with OpenAI yesterday? , Is Windows 12 released?)
 wether_app()     → get weather
+create_event()   → create Google Calendar event
+list_events()    → list upcoming Google Calendar events
+delete_event()   → delete a Google Calendar event
 set_timer()      → countdown timer
 set_alarm()      → alarm at specific time
 translate()      → translate any language
@@ -161,6 +189,7 @@ ABSOLUTE RULES:
 - One tool call per step. Wait for its result before the next step.
 - If you need info from the user (e.g. "what's the message?"), respond with a plain question and NO tool-call-looking text — just ask, then stop.
 - Follow ONLY the defined workflows below. Do not invent extra steps (e.g. don't wait for replies unless asked).
+- If the user asks for current/live/changing information, call rt_data(query=...) first. Do not say "let me check" and stop.
 - Call done(summary=...) only after tool results confirm the task is complete.
 
 TASK COMPLETION RECOGNITION:
@@ -355,13 +384,40 @@ Spotify search flow — always follow this exact order:
 ━━━ WEATHER ━━━
 - Any weather question → wether_app(city="city name") → done()
 
+━━━ Calendar flow ━━━
+- "add event / schedule X" → create_event() — get date/time from user, convert to ISO format
+- "what's on my calendar" / "my events" → list_events()
+- "cancel/delete X meeting" → delete_event()
+- If user gives relative time ("tomorrow at 5pm"), convert it to ISO format yourself before calling create_event()
+- Always confirm the event was created by reading back summary + time in done()
+- If a required event detail is missing, ask one short question and stop. Do not guess.
+
+━━━ REAL-TIME INFORMATION ━━━
+- Any question requiring up-to-date or live information → rt_data()
+- After rt_data returns, answer the user directly from the tool result, then call done(summary=...).
+- Never answer with only "let me check", "checking", or "one sec". If checking is needed, use rt_data immediately.
+- Examples:
+  • "Who is the President of India?"
+  • "What is today's date?"
+  • "Ipl point table"
+  • "What time is it in London?"
+  • "Latest Python version"
+  • "Current CEO of OpenAI"
+  • "Real madrid new transfer"
+  • "USD to INR exchange rate"
+  • "Is Windows 12 released?"
+  • "What happened with OpenAI today?"
+
+- Use rt_data() whenever the answer may have changed after your training data.
+- Never answer current or changing facts from memory when rt_data() can verify them.
+
 ━━━ TIMER / ALARM ━━━
 - "timer for 5 minutes"   → set_timer(minutes=5)         → done()
 - "alarm at 7:30"         → set_alarm(alarm_time="07:30") → done()
 
 ━━━ RULES ━━━
 - For desktop/app tasks, open_app() first → then wait(3) before next step
-- For Gmail/email, news, weather, memory, timer and alarm tasks, use the dedicated tool directly instead of opening apps or browsers
+- For Gmail/email, news, weather, calendar, real-time info, memory, timer and alarm tasks, use the dedicated tool directly instead of opening apps or browsers
 - After clicking always wait(1) before next action
 - Use read_screen() to verify important steps
 - Call done() only when task is confirmed complete
@@ -381,11 +437,13 @@ def is_computer_task(user_input: str) -> bool:
                        "what task", "do you know my", "what is my"]
     if any(k in user_input.lower() for k in memory_keywords):
         return False
+    if should_use_tool_router(user_input):
+        return True
     response = llm_plain.invoke([
         SystemMessage("""Reply only YES or NO.
 
 Should this use computer control tools?
-YES for: opening apps, clicking, typing, searching web, playing music, news lookup, Gmail/email reading or sending, volume, any task on computer
+YES for: opening apps, clicking, typing, searching web, playing music, news lookup, real-time facts, today's date/time, calendar tasks, Gmail/email reading or sending, volume, any task on computer
 NO for: pure conversation, jokes, math, general knowledge questions with no action needed
 
 Be generous with YES - when in doubt say YES."""),
@@ -454,6 +512,7 @@ def think(user_input):
     recent_tasks = get_recent_tasks(5)
     prefs = get_all_preferences()
     smart_memory_context = build_memory_context(user_input)
+    local_now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
     # Build memory context(Ai code - to clean up)
 
@@ -477,6 +536,9 @@ def think(user_input):
     ]) if prefs else "None"
 
     SYSTEM_WITH_MEMORY = SYSTEM + f"""
+
+Current local date/time for Irfan:
+{local_now} (Asia/Kolkata)
 
 User Preferences:
 {prefs_text}
@@ -554,6 +616,33 @@ Use this when user asks what you did, what tasks were completed, or you can use 
                     content="Do not write function syntax as text. Either call the actual tool, or ask a plain question with no code-like text."
                 ))
                 continue
+
+            if should_use_tool_router(user_input) and not completed_steps:
+                final_text = clean_assistant_text(response.content)
+                if not final_text or any(phrase in final_text.lower() for phrase in ["let me check", "checking", "one sec", "wait a sec"]):
+                    print("[Guard] Realtime/calendar task got no tool call — forcing tool use")
+                    lower_input = user_input.lower()
+                    calendar_related = any(k in lower_input for k in [
+                        "calendar", "schedule", "appointment", "meeting", "event",
+                        "my events", "upcoming events",
+                    ])
+
+                    if any(k in lower_input for k in ["what's on my calendar", "my calendar", "my events", "upcoming events"]):
+                        result = list_events.invoke({"max_results": 5})
+                        completed_steps.append("list_events({'max_results': 5})")
+                    elif calendar_related:
+                        messages.append(HumanMessage(
+                            content="This is a calendar task. Use create_event, list_events, or delete_event. If required details are missing, ask one short question."
+                        ))
+                        continue
+                    else:
+                        result = rt_data.invoke({"query": user_input})
+                        completed_steps.append(f"rt_data({{'query': {user_input!r}}})")
+
+                    final_text = clean_assistant_text(str(result))
+                    save_task(user_input=user_input, steps=completed_steps, success=True)
+                    auto_extract_memories(user_input, final_text)
+                    return final_text if final_text else "Done."
 
             final_text = clean_assistant_text(response.content)
             if completed_steps:

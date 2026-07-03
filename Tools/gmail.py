@@ -3,10 +3,16 @@ import base64
 import pickle
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from langchain_core.tools import tool
+
+try:
+    from google.auth.transport.requests import Request
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from googleapiclient.discovery import build
+except ImportError:
+    Request = None
+    InstalledAppFlow = None
+    build = None
 
 # Scopes - what TARZ can do with Gmail
 SCOPES = [
@@ -18,21 +24,50 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDENTIALS_FILE = os.path.join(BASE_DIR, "gmail_credentials.json")
 TOKEN_FILE = os.path.join(BASE_DIR, "gmail_token.pickle")
 
+GMAIL_NOT_CONFIGURED = (
+    "Email is not configured yet. Add Tools/gmail_credentials.json and run a Gmail task again "
+    "to connect your Google account."
+)
+
+GOOGLE_DEPS_MISSING = (
+    "Email is not available because Google API packages are not installed yet. "
+    "Run install.bat or install the requirements first."
+)
+
+
+class GmailNotConfigured(Exception):
+    pass
+
 
 def get_gmail_service():
     """Authenticate and return Gmail service"""
+    if build is None or InstalledAppFlow is None or Request is None:
+        raise GmailNotConfigured(GOOGLE_DEPS_MISSING)
+
+    if not os.path.exists(CREDENTIALS_FILE):
+        raise GmailNotConfigured(GMAIL_NOT_CONFIGURED)
+
     creds = None
 
     # Load existing token
     if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, 'rb') as f:
-            creds = pickle.load(f)
+        try:
+            with open(TOKEN_FILE, 'rb') as f:
+                creds = pickle.load(f)
+        except Exception:
+            creds = None
 
     # Refresh or re-authenticate
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception:
+                creds = None
+
+        if not creds or not creds.valid:
+            if not os.path.exists(CREDENTIALS_FILE):
+                raise GmailNotConfigured(GMAIL_NOT_CONFIGURED)
             # First time - opens browser for login
             flow = InstalledAppFlow.from_client_secrets_file(
                 CREDENTIALS_FILE, SCOPES
@@ -49,8 +84,11 @@ def get_gmail_service():
                 )
             )
 
-        with open(TOKEN_FILE, 'wb') as f:
-            pickle.dump(creds, f)
+        try:
+            with open(TOKEN_FILE, 'wb') as f:
+                pickle.dump(creds, f)
+        except OSError:
+            pass
 
     return build('gmail', 'v1', credentials=creds)
 
@@ -83,6 +121,8 @@ def send_email(to: str, subject: str, body: str) -> str:
 
         return f"Email sent to {to} with subject '{subject}'"
 
+    except GmailNotConfigured as e:
+        return str(e)
     except Exception as e:
         return f"Email failed: {e}"
 
@@ -122,7 +162,6 @@ def read_emails(max_results: int = 5, query: str = "") -> str:
                 format='full'
             ).execute()
 
-            # Extract headers
             headers = full_msg['payload']['headers']
             subject = next(
                 (h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
@@ -131,7 +170,6 @@ def read_emails(max_results: int = 5, query: str = "") -> str:
             date = next((h['value']
                         for h in headers if h['name'] == 'Date'), '')
 
-            # Extract body
             body = ""
             if 'parts' in full_msg['payload']:
                 for part in full_msg['payload']['parts']:
@@ -152,6 +190,8 @@ def read_emails(max_results: int = 5, query: str = "") -> str:
 
         return output
 
+    except GmailNotConfigured as e:
+        return str(e)
     except Exception as e:
         return f"Read emails failed: {e}"
 
