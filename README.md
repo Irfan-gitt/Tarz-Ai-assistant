@@ -16,7 +16,16 @@ Along the way I picked up real concepts — RAG (retrieval-augmented generation)
 
 ---
 
+Demo 
+
+
+
+
 ## ⚠️ This Is a Prototype (v1)
+
+
+https://github.com/user-attachments/assets/9e018ae5-f97f-4a2c-b430-35d2d75c0ebb
+
 
 
 
