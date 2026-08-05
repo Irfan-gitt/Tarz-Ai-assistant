@@ -16,7 +16,8 @@ Along the way I picked up real concepts — RAG (retrieval-augmented generation)
 
 ---
 
-Demo 
+DEMO: SORRY FOR THE LOQ QUALITY MAX GIT FILE SIZE IS 10 MB AND VIDEO ALSO FAST FORWARD TO 3X 🙂<img width="1284" height="722" alt="Screenshot 2026-08-05 222739" src="https://github.com/user-attachments/assets/263a9c2b-2374-4113-97a3-054c8712e879" /> THIS IMAGE SHOWS THE BACKGROUND PROCESS
+
 
 
 
