@@ -23,7 +23,7 @@ def get_client():
 
 
 VISION_MODELS = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "qwen/qwen3.6-27b",
 ]
 
 
@@ -55,7 +55,7 @@ def describe_screen(question):
                         },
                         {
                             "type": "text",
-                            "text": f"""You are JARVIS, an AI assistant with vision capabilities.
+                            "text": f"""You are TARZ, an AI assistant with vision capabilities.
                             
         User question: "{question}"
 
