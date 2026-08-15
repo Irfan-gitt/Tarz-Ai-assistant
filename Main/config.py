@@ -187,7 +187,7 @@ def think(user_input):
     global _pending_messages  # iknow its bad practise iam just lazyyyy🙂
 
     similar_tasks = retrieve_similar_task(user_input, n=3)
-    similar_chats = retrieve_similar_chats(user_input, n=5)
+    similar_chats = retrieve_similar_chats(user_input, n=5) 
     recent_tasks = get_recent_tasks(5)
     prefs = get_all_preferences()
     smart_memory_context = build_memory_context(user_input)

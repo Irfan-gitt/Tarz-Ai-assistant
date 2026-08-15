@@ -1,3 +1,7 @@
+import uuid
+from dotenv import load_dotenv
+import json
+from langchain_groq import ChatGroq
 import chromadb
 import os
 import re
@@ -218,7 +222,8 @@ def save_memory(
         return "No memory saved: empty value"
 
     stable_kinds = {"person", "preference", "identity", "goal", "boundary"}
-    mem_id = f"mem_{kind}_{_slug(key)}" if kind in stable_kinds else _new_id(f"mem_{kind}")
+    mem_id = f"mem_{kind}_{_slug(key)}" if kind in stable_kinds else _new_id(
+        f"mem_{kind}")
     document = f"{kind.upper()} | {key}: {value}"
 
     memory_collection.upsert(
@@ -304,7 +309,8 @@ def build_memory_context(query: str) -> str:
             for m in items
         ])
 
-    prefs_text = "\n".join([f"- {k}: {v}" for k, v in prefs.items()]) if prefs else "None"
+    prefs_text = "\n".join(
+        [f"- {k}: {v}" for k, v in prefs.items()]) if prefs else "None"
 
     return f"""
 SMART MEMORY CONTEXT
@@ -380,18 +386,21 @@ def auto_extract_memories(user_msg: str, tarz_msg: str = "") -> list:
             ))
             break
 
-    event_markers = ["exam", "deadline", "interview", "breakup", "fight", "meeting", "project", "presentation"]
+    event_markers = ["exam", "deadline", "interview",
+                     "breakup", "fight", "meeting", "project", "presentation"]
     if any(marker in lower for marker in event_markers):
         title = next(marker for marker in event_markers if marker in lower)
         saved.append(save_memory(
             "event",
             title,
             text[:240],
-            importance=8 if title in {"breakup", "fight", "exam", "deadline"} else 6,
+            importance=8 if title in {"breakup",
+                                      "fight", "exam", "deadline"} else 6,
             source="auto"
         ))
 
-    goal_markers = ["i need to", "i want to", "my goal", "we need to", "i have to"]
+    goal_markers = ["i need to", "i want to",
+                    "my goal", "we need to", "i have to"]
     if any(marker in lower for marker in goal_markers):
         saved.append(save_memory(
             "goal",
@@ -422,3 +431,64 @@ def auto_extract_memories(user_msg: str, tarz_msg: str = "") -> list:
             break
 
     return saved
+
+
+client = chromadb.PersistentClient(path="./tarz_memory")
+context_collection = client.get_or_create_collection("context_memory")
+
+
+load_dotenv()
+llm = ChatGroq(
+
+    temperature=0,
+    model="llama-3.3-70b-versatile")
+
+
+def context_agent(user_input, ai_reply):
+    PROMPT = f"""Extract memory-worthy information from this exchange. Return ONLY valid JSON, nothing else.
+
+    Categories:
+    - "preference": stable facts about how the user likes things done — habits, tool choices, tastes. Not one-off requests.
+    - "tool_result": a tool/action actually completed this turn, and its outcome. Only if a real action happened.
+    - "long_term": durable facts about identity, goals, relationships, education — stays true for months/years.
+
+    Rules:
+    - Leave a category as "" if nothing in this exchange fits it — don't force every category to have content.
+    - One short line per fact, not a paragraph. No repeating the raw conversation.
+
+    Exchange:
+    User: {user_input}
+    AI: {ai_reply}
+
+    Return exactly this JSON shape:
+    {{"preference": "", "tool_result": "", "long_term": ""}}
+    """
+    response = llm.invoke(PROMPT)
+    return json.loads(response.content)
+
+
+def save_context(ctx: dict, user_input: str):
+    saved = []
+    for kind, value in ctx.items():
+        if not value:
+            continue
+        context_collection.add(
+            documents=[value],
+            metadatas=[{
+                "kind": kind,
+                "value": value,
+                "source_input": user_input,
+                "timestamp": datetime.now().isoformat()
+            }],
+            ids=[f"{kind}_{uuid.uuid4().hex[:8]}"]
+        )
+        saved.append(kind)
+    return saved
+
+
+def save_imp_context(user_input: str, ai_reply: str):
+    ctx = context_agent(user_input, ai_reply)
+    return save_context(ctx, user_input)
+
+
+print(context_collection.get())

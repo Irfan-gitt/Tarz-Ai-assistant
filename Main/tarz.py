@@ -1,4 +1,5 @@
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing import Annotated, Literal
@@ -20,13 +21,13 @@ from Prompts.prompt import SYSTEM_PROMPT, SYSTEM
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Tools.gmail import send_email, read_emails, search_emails
-from Tools.calendar import create_event, list_events, delete_event
+from Tools.calendar_tool import create_event, list_events, delete_event
 from Tools.real_time_data import rt_data
 from Audio.stt import listen as stt_listen
 from Audio.tts import speak
 print("on tools")  # noqa
-from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, detect_mood, correct_memory, wait, done
-from Tools.memory import save_task, retrieve_similar_task, retrieve_similar_chats, get_recent_tasks, get_all_preferences, save_conversation, get_recent_conversations, build_memory_context, auto_extract_memories
+from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, clipboard, wait, done
+from Tools.memory import save_imp_context
 
 from Actions.execute_action import click
 print("[Init] 3 - rag...")
@@ -40,7 +41,7 @@ api_cb = os.getenv("CEREBRAS_API_KEY")
 
 
 TOOLS = [click, type_text, press_key, open_app,
-         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate, correct_memory, rt_data, detect_mood, clipboard, create_event, list_events, delete_event, remember, wait, done]
+         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate,  rt_data, clipboard, create_event, list_events, delete_event, wait, done]
 
 
 TOOL_TEXT_PATTERN = re.compile(
@@ -92,20 +93,6 @@ def listen():
     return user_input
     # return stt_listen()
 
-
-def build_conversation_history():
-    past = get_recent_conversations(10)
-    history = []
-    for meta, _ in past:
-        history.append({"role": "user", "content": meta["user"]})
-        history.append({"role": "assistant", "content": meta["tarz"]})
-    return history
-
-
-print("[Init] Building conversation history...")
-conversation_history = [
-    SystemMessage(content=SYSTEM_PROMPT)
-] + build_conversation_history()
 
 TOOL_LLMS = [
 
@@ -204,16 +191,23 @@ def think(user_input: str) -> str:
     result = app.invoke({"messages": [
         SystemMessage(content=SYSTEM),
         HumanMessage(content=user_input)
-    ]})
-    return extract_text(result["messages"][-1].content)
+
+    ]}, config={"configurable": {"thread_id": "user"}})
+
+    response = extract_text(result["messages"][-1].content)
+
+    save_imp_context(user_input, response)
+    return response
 
 
 def main():
     while True:
 
         user_input = listen()
+
         if not user_input:
             continue
+
         print("TARZ:", think(user_input))
 
 
