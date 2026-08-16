@@ -1,4 +1,3 @@
-
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -28,7 +27,7 @@ from Audio.tts import speak
 print("on tools")  # noqa
 from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, clipboard, wait, done
 from Tools.memory import save_imp_context
-
+from Tools.rag import hybrid_retrieve
 from Actions.execute_action import click
 print("[Init] 3 - rag...")
 
@@ -188,8 +187,17 @@ def extract_text(content):
 
 
 def think(user_input: str) -> str:
+    memories = hybrid_retrieve(user_input, n=5)
+    memory_text = "\n".join(f"- {m}" for m in memories) if memories else "None"
+
+    system = SYSTEM + f"""
+
+Relevant memories:
+{memory_text}
+"""
+
     result = app.invoke({"messages": [
-        SystemMessage(content=SYSTEM),
+        SystemMessage(content=system, id="system"),
         HumanMessage(content=user_input)
 
     ]}, config={"configurable": {"thread_id": "user"}})

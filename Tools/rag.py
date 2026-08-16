@@ -1,155 +1,38 @@
-"""
-RAG — Vector memory for TARZ.
-Stores tasks + conversations as embeddings.
-Retrieves semantically similar context before each task.
-"""
-
-import chromadb
-from chromadb.utils import embedding_functions
-import json
-import time
-import os
-
-os.makedirs("memory", exist_ok=True)
-
-client = chromadb.PersistentClient(path="memory/chroma")
-embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2", device="cpu")
-
-tasks_col = client.get_or_create_collection(
-    name="tasks",
-    embedding_function=embedder
-)
-chats_col = client.get_or_create_collection(
-    name="conversations",
-    embedding_function=embedder
-)
+from Tools.memory import context_collection
+from rank_bm25 import BM25Okapi
 
 
-def save_task(user_input: str, steps: list, success: bool):
-    """Store a completed task with its steps."""
-    doc_id = f"task_{int(time.time())}"
-    tasks_col.add(
-        ids=[doc_id],
-        documents=[user_input],
-        metadatas=[{
-            "task":    user_input,
-            "steps":   json.dumps(steps),
-            "success": str(success),
-            "time":    str(int(time.time()))
-        }]
-    )
-    print(f"[RAG] Saved task: {user_input}")
-
-
-def save_conversation(user: str, tarz: str):
-    """Store a conversation exchange."""
-    doc_id = f"chat_{int(time.time())}"
-    chats_col.add(
-        ids=[doc_id],
-        documents=[user],
-        metadatas=[{
-            "user": user,
-            "tarz": tarz,
-            "time": str(int(time.time()))
-        }]
-    )
-
-
-# Retrieve
-
-def retrieve_similar_task(query: str, n: int = 3) -> list:
-    """Find semantically similar past tasks."""
-    try:
-        results = tasks_col.query(
-            query_texts=[query],
-            n_results=min(n, tasks_col.count())
-        )
-        if not results["documents"][0]:
-            return []
-
-        tasks = []
-        for i, doc in enumerate(results["documents"][0]):
-            meta = results["metadatas"][0][i]
-            tasks.append({
-                "task":    meta["task"],
-                "steps":   json.loads(meta["steps"]),
-                "success": meta["success"]
-            })
-        return tasks
-
-    except Exception as e:
-        print(f"[RAG] Retrieve error: {e}")
+def hybrid_retrieve(query: str, kind: str = None, n: int = 5) -> list[str]:
+    where = {"kind": kind} if kind else None
+    results = context_collection.get(where=where)
+    all_docs, all_metas = results["documents"], results["metadatas"]
+    if not all_docs:
         return []
 
+    # vector search ranking (meaning-based)
+    vector_ranked = context_collection.query(
+        query_texts=[query], where=where, n_results=len(all_docs))["documents"][0]
 
-def retrieve_similar_chats(query: str, n: int = 5) -> list:
-    """Find semantically similar past conversations."""
-    try:
-        results = chats_col.query(
-            query_texts=[query],
-            n_results=min(n, chats_col.count())
-        )
-        if not results["documents"][0]:
-            return []
+    # BM25 ranking (exact keyword-based)
+    tokenized = [doc.lower().split() for doc in all_docs]
+    bm25 = BM25Okapi(tokenized)
+    scores = bm25.get_scores(query.lower().split())
+    bm25_ranked = [doc for _, doc in sorted(
+        zip(scores, all_docs), reverse=True)]
 
-        chats = []
-        for i, doc in enumerate(results["documents"][0]):
-            meta = results["metadatas"][0][i]
-            chats.append({
-                "user": meta.get("user", ""),
-                "tarz": meta.get("tarz", "")
-            })
-        return chats
+    timestamps = {doc: meta["timestamp"]
+                  for doc, meta in zip(all_docs, all_metas)}
+    recency_ranked = sorted(
+        all_docs, key=lambda d: timestamps[d], reverse=True)
+  # merge both rankings — reciprocal rank fusion
+    fused = {}
+    for rank, doc in enumerate(vector_ranked):
+        fused[doc] = fused.get(doc, 0) + 1 / (60 + rank)
+    for rank, doc in enumerate(bm25_ranked):
+        fused[doc] = fused.get(doc, 0) + 1 / (60 + rank)
+    for rank, doc in enumerate(recency_ranked):
+        # smaller weight — nudge, not override
+        fused[doc] = fused.get(doc, 0) + 0.3 / (60 + rank)
 
-    except Exception as e:
-        print(f"[RAG] Chat retrieve error: {e}")
-        return []
-
-
-def get_recent_tasks(n: int = 5) -> list:
-    """Get most recent tasks by timestamp."""
-    try:
-        all_tasks = tasks_col.get()
-        if not all_tasks["ids"]:
-            return []
-
-        combined = list(zip(
-            all_tasks["metadatas"],
-            all_tasks["documents"]
-        ))
-        # Sort by time desc
-        combined.sort(key=lambda x: int(x[0].get("time", 0)), reverse=True)
-
-        return [{"task": m["task"], "steps": json.loads(m["steps"])}
-                for m, _ in combined[:n]]
-
-    except Exception as e:
-        print(f"[RAG] Recent tasks error: {e}")
-        return []
-
-
-def get_all_preferences() -> dict:
-    """Get stored user preferences."""
-    try:
-        results = chats_col.get(where={"type": {"$eq": "preference"}})
-        prefs = {}
-        for meta in results["metadatas"]:
-            prefs[meta.get("key", "")] = meta.get("value", "")
-        return prefs
-    except:
-        return {}
-
-
-def save_preference(key: str, value: str):
-    """Save a user preference."""
-    doc_id = f"pref_{key}"
-    try:
-        chats_col.delete(ids=[doc_id])
-    except:
-        pass
-    chats_col.add(
-        ids=[doc_id],
-        documents=[f"{key}: {value}"],
-        metadatas=[{"type": "preference", "key": key, "value": value}]
-    )
+    merged = sorted(fused.items(), key=lambda x: x[1], reverse=True)
+    return [doc for doc, _ in merged[:n]]

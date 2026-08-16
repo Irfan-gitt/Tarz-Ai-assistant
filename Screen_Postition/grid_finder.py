@@ -4,6 +4,8 @@ Draws a labeled grid over the screenshot, asks Gemini which cell contains
 the target, then converts cell → exact pixel coordinates.
 """
 
+from google.genai import types
+import time
 import os
 import re
 import pyautogui
@@ -27,9 +29,11 @@ GEMINI_KEYS = [k for k in GEMINI_KEYS if k]  # remove empty
 
 current_key_idx = 0
 
+_clients = [genai.Client(api_key=k) for k in GEMINI_KEYS]
+
 
 def get_gemini_client():
-    return genai.Client(api_key=GEMINI_KEYS[current_key_idx])
+    return _clients[current_key_idx]
 
 
 COLS = 24
@@ -162,21 +166,31 @@ def grid_find(target: str) -> dict:
     global current_key_idx
     print(f"\n[GridFinder] Looking for: '{target}'")
 
+    t0 = time.time()
     image = take_screenshot()
+    print(f"[timing] screenshot: {time.time()-t0:.2f}s")
+
+    t1 = time.time()
     draw_grid(image, COLS, ROWS)
+    print(f"[timing] draw_grid: {time.time()-t1:.2f}s")
 
     for attempt in range(len(GEMINI_KEYS)):
         try:
+            t2 = time.time()
             client = get_gemini_client()
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=[
                     _GRID_PROMPT.format(target=target),
                     Image.open("temp/screen_grid.png")
-                ]
+                ],
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    max_output_tokens=100,  # your response is like 4 lines, cap it
+                )
             )
+            print(f"[timing] gemini call: {time.time()-t2:.2f}s")
             break
-
         except Exception as e:
             if "429" in str(e) or "quota" in str(e).lower():
                 print(
@@ -194,6 +208,7 @@ def grid_find(target: str) -> dict:
     print(f"[Gemini] {result}")
 
     if "NOT_FOUND" in result:
+        print("[GridFinder] Target not found retry.")
         reason_match = re.search(r"REASON:\s*(.+)", result)
         return {"found": False, "reason": reason_match.group(1) if reason_match else "unknown"}
 

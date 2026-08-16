@@ -26,7 +26,7 @@ import time  # noqa
 print("[Actions] 2 - get_coordinates...")  # noqa
 from Screen_Postition.get_coordinates import find_on_screen  # noqa
 print("rag")  # noqa
-from Tools.memory import save_preference, save_memory  # noqa
+# noqa
 
 print("[Actions] 3 - vision...")  # noqa
 from Vison.vision import describe_screen  # noqa
@@ -87,37 +87,6 @@ def type_text(text: str) -> str:
     """Type text into the currently focused input field."""
     pyautogui.write(text, interval=0.05)
     return f"Typed: {text}"
-
-
-@tool
-def correct_memory(key: str, correct_value: str) -> str:
-    """
-    Correct or update something in memory.
-    Use when user says 'that's wrong', 'actually it's', 'correct that to'.
-    Examples:
-    correct_memory(key='name', correct_value='Irfan')
-    correct_memory(key='favourite_song', correct_value='Sailor Song')
-    """
-    save_preference(key, correct_value)
-    save_memory("preference", key, correct_value,
-                importance=9, source="correction")
-    return f"Corrected: {key} = {correct_value}"
-
-
-@tool
-def remember(key: str, value: str) -> str:
-    """
-    Save something to memory.
-    Use when user says 'remember that...' or shares preferences.
-
-    Examples:
-    remember(key='favourite_song', value='Sailor Song by Gigi Perez')
-    remember(key='name', value='Irfan')
-    remember(key='city', value='Trivandrum')
-    """
-    save_preference(key, value)
-    save_memory("preference", key, value, importance=8, source="manual")
-    return f"Remembered: {key} = {value}"
 
 
 @tool
