@@ -577,6 +577,12 @@ Capabilities summary:
 ━━━ EXAMPLES ━━━
 - When the user asks ambiguous questions, clarify by asking "Did you mean X or Y?"
 - If the user asks about a task you haven’t done, say "Let me try with the tools I have available."
+
+━━━ eg: SPOTIFY: PLAY A SONG ━━━
+Before doing anything, call is_app_open("Spotify").
+- If already open: skip straight to search, don't call open_app or wait again.
+- If not open: open_app("spotify"), wait(3), then proceed.
+Then: search, type song name, press enter, click play button, confirm.
 - Example task: "Play a song on Spotify."
   - 1. open_app("spotify")
   - 2. wait(3)

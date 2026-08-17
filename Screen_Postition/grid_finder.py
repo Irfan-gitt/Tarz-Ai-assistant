@@ -16,7 +16,9 @@ from google import genai
 load_dotenv()
 
 pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.5
+# PyAutoGUI applies this pause after *every* call.  Keep a tiny safety gap, but
+# don't add a full second to each vision-guided click (move + click).
+pyautogui.PAUSE = 0.05
 
 
 GEMINI_KEYS = [
@@ -71,6 +73,15 @@ ELEMENT_TYPE: <button/text/icon/input/link/other>
 If not visible:
 NOT_FOUND
 REASON: <brief reason>"""
+
+# A grid lookup is a classification task, not a reasoning task.  Gemini 2.5
+# Flash otherwise may spend time generating hidden reasoning before returning
+# the four short lines that this parser needs.
+_FAST_GRID_CONFIG = types.GenerateContentConfig(
+    thinking_config=types.ThinkingConfig(thinking_budget=0),
+    max_output_tokens=64,
+    temperature=0,
+)
 
 
 def take_screenshot() -> Image.Image:
@@ -168,41 +179,35 @@ def grid_find(target: str) -> dict:
 
     t0 = time.time()
     image = take_screenshot()
-    print(f"[timing] screenshot: {time.time()-t0:.2f}s")
-
     t1 = time.time()
-    draw_grid(image, COLS, ROWS)
-    print(f"[timing] draw_grid: {time.time()-t1:.2f}s")
 
+    grid_image = draw_grid(image, COLS, ROWS)
+    t2 = time.time()
+    print(f"[TIMING] screenshot: {t1-t0:.2f}s | draw_grid: {t2-t1:.2f}s")
+
+    response = None
     for attempt in range(len(GEMINI_KEYS)):
         try:
-            t2 = time.time()
             client = get_gemini_client()
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=[
-                    _GRID_PROMPT.format(target=target),
-                    Image.open("temp/screen_grid.png")
-                ],
-                config=types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                    max_output_tokens=100,  # your response is like 4 lines, cap it
-                )
+                contents=[_GRID_PROMPT.format(target=target), grid_image],
+                config=_FAST_GRID_CONFIG,
             )
-            print(f"[timing] gemini call: {time.time()-t2:.2f}s")
             break
         except Exception as e:
+            print(f"[GridFinder] Attempt {attempt+1} failed: {e}")
             if "429" in str(e) or "quota" in str(e).lower():
-                print(
-                    f"[GridFinder] Key {current_key_idx + 1} rate limited, switching...")
                 current_key_idx = (current_key_idx + 1) % len(GEMINI_KEYS)
                 continue
-            else:
-                print(f"[GridFinder] Error: {e}")
-                return {"found": False}
-    else:
+            return {"found": False}
+
+    if response is None:
         print("[GridFinder] All keys exhausted")
         return {"found": False}
+
+    t3 = time.time()
+    print(f"[TIMING] gemini call: {t3-t2:.2f}s | total: {t3-t0:.2f}s")
 
     result = response.text.strip()
     print(f"[Gemini] {result}")
@@ -245,24 +250,22 @@ def grid_find(target: str) -> dict:
     }
 
 
-def click(target: str) -> bool:
-    """Find and click a UI element. Returns True if successful."""
+def click(target: str) -> dict:
+    """Find and click a UI element. Returns dict with found/x/y."""
     result = grid_find(target)
-
     if not result["found"]:
-        return False
+        return {"found": False}
 
     x, y = result["x"], result["y"]
     screen_w, screen_h = pyautogui.size()
-
     if not (0 < x < screen_w and 0 < y < screen_h):
-        print(f"[GridFinder] ({x}, {y}) out of bounds.")
-        return False
+        return {"found": False}
 
-    pyautogui.moveTo(x, y, duration=0.3)
-    pyautogui.click()
+    # Supplying coordinates directly avoids a separate moveTo() call and its
+    # global PyAutoGUI pause.
+    pyautogui.click(x, y)
     print(f"[GridFinder] ✓ Clicked at ({x}, {y})")
-    return True
+    return {"found": True, "x": x, "y": y}
 
 
 if __name__ == "__main__":

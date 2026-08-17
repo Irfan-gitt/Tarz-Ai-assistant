@@ -1,3 +1,6 @@
+from Screen_Postition.grid_finder import click as grid_click
+from dotenv import load_dotenv
+import easyocr
 import pyautogui
 import warnings
 
@@ -7,9 +10,6 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-import easyocr
-from dotenv import load_dotenv
-from Screen_Postition.grid_finder import click as grid_click
 
 load_dotenv()
 
@@ -48,22 +48,11 @@ def easyocr_find(target):
 
 
 def find_on_screen(target):
-    take_screenshot()
-
-    print(f"Searching for '{target}' with OCR...")
-    result = easyocr_find(target)
-
-    if result["found"]:
-        print(f"Found with OCR: {result}")
-        pyautogui.moveTo(result["x"], result["y"], duration=0.3)
-        pyautogui.click()
+    # grid_click captures the screenshot itself.  Taking one here only adds
+    # latency and used to make every returned dictionary look like success.
+    result = grid_click(target)
+    if result.get("found"):
         return result
-
-    print(f"OCR failed, trying grid vision...")
-    success = grid_click(target)
-
-    if success:
-        return {"found": True}
 
     print(f"'{target}' not found on screen")
     return {"found": False}

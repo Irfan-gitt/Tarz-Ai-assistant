@@ -72,7 +72,7 @@ try:
     llm_plain = ChatGroq(
         api_key=os.getenv("groq_api"),
         temperature=0.7,
-        model="llama-3.3-70b-versatile"
+        model="openai/gpt-oss-120b"
     )
 
 except Exception as e:
@@ -80,7 +80,7 @@ except Exception as e:
     llm_plain = ChatGroq(
         api_key=os.getenv("groq_api"),
         temperature=0.7,
-        model="llama-3.3-70b-versatile"
+        model="openai/gpt-oss-120b"
     )
 
 

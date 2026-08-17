@@ -1,7 +1,7 @@
 import time
 from grid_finder import click as grid_click
 
-target = "youtube logo"
+target = "green_play_button"
 
 start = time.time()
 result = grid_click(target)
