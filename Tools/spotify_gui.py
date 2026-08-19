@@ -46,6 +46,7 @@ def _click_at(cl_target):
 
     pyautogui.moveTo(px, py, duration=0.3)
     pyautogui.click()
+    return {"found": False}
 
 
 def _spotify_search(query: str):
@@ -63,7 +64,7 @@ def _spotify_search(query: str):
 def _find_with_retry():
     for i in range(3):
         result = _click_at()
-        if result.get["found"]:
+        if result["found"]:
             return result
         print(
             f"[Retry] '{3}' attempt {i+1}/{0} failed, retrying...")

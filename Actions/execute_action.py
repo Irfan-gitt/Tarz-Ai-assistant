@@ -24,7 +24,7 @@ import pyautogui  # noqa
 import time  # noqa
 
 print("[Actions] 2 - get_coordinates...")  # noqa
-from Screen_Postition.get_coordinates import find_on_screen  # noqa
+from Screen_Postition.get_coordinates import find_on_screen, find_and_click  # noqa
 print("rag")  # noqa
 # noqa
 
@@ -76,7 +76,7 @@ def click(element: str) -> str:
 
     Works for: Spotify, WhatsApp, YouTube, Chrome, any app
     """
-    result = find_on_screen(element)
+    result = find_and_click(element)
     if result["found"]:
         return f"Clicked {element}"
     return f"Could not find {element}"

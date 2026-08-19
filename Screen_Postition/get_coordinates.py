@@ -1,3 +1,7 @@
+import time
+import moondream as md
+from PIL import Image
+import os
 from Screen_Postition.grid_finder import click as grid_click
 from dotenv import load_dotenv
 import easyocr
@@ -55,4 +59,40 @@ def find_on_screen(target):
         return result
 
     print(f"'{target}' not found on screen")
+    return {"found": False}
+
+
+load_dotenv()
+
+
+def find_and_click(target):
+    pyautogui.screenshot().save("grid_screen.png")
+    image = Image.open("grid_screen.png")
+
+    model = md.vl(api_key=os.getenv("MOONDREAM_API_KEY"))
+
+    target = target
+    result = model.point(image, target)
+
+    if result.get("points"):
+        point = result["points"][0]
+        w, h = image.size
+        px = int(point["x"] * w)   # if normalized 0-1, convert to real pixels
+        py = int(point["y"] * h)
+        print(f"'{target}' found at pixel ({px}, {py}) on a {w}x{h} screenshot")
+    else:
+        print(f"'{target}' not found")
+
+    x = point["x"]
+    y = point["y"]
+
+    # handle both cases — some APIs give 0-1 normalized, some give absolute pixels
+    if x <= 1 and y <= 1:
+        px, py = int(x * w), int(y * h)
+    else:
+        px, py = int(x), int(y)
+
+    pyautogui.moveTo(px, py, duration=0.3)
+    pyautogui.click()
+
     return {"found": False}
