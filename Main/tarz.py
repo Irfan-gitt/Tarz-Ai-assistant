@@ -7,6 +7,15 @@ from typing_extensions import TypedDict
 import re
 import sys  # noqa
 import os  # noqa
+
+# Windows terminals often default to cp1252, while startup logs and prompts
+# contain Unicode characters. Configure output before importing modules that
+# print their own startup messages.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 import time
 import os
@@ -24,6 +33,7 @@ from Tools.calendar_tool import create_event, list_events, delete_event
 from Tools.real_time_data import rt_data
 from Audio.stt import listen as stt_listen
 from Audio.tts import speak
+from Tools.spotify_gui import spotify_play_song, spotify_play_playlist
 print("on tools")  # noqa
 from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, clipboard, wait, done
 from Tools.memory import save_imp_context
@@ -34,13 +44,13 @@ print("[Init] 3 - rag...")
 load_dotenv()
 
 
-api_key = os.getenv("groq_api")
+api_key = os.getenv("GROQ_API_KEY")
 api_or = os.getenv("OPENROUTER_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
 
 TOOLS = [click, type_text, press_key, open_app,
-         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, translate,  rt_data, clipboard, create_event, list_events, delete_event, wait, done]
+         read_screen, news_update, wether_app, volume_control, use_shortcut, set_alarm, send_email, read_emails, search_emails, set_timer, spotify_play_song, spotify_play_playlist, translate,  rt_data, clipboard, create_event, list_events, delete_event, wait, done]
 
 
 TOOL_TEXT_PATTERN = re.compile(
@@ -70,7 +80,7 @@ llm_tools = ChatCerebras(
 ).bind_tools(TOOLS)
 try:
     llm_plain = ChatGroq(
-        api_key=os.getenv("groq_api"),
+        api_key=api_key,
         temperature=0.7,
         model="openai/gpt-oss-120b"
     )
@@ -78,7 +88,7 @@ try:
 except Exception as e:
     print(f"An error occurred while setting up LLMs: {e}")
     llm_plain = ChatGroq(
-        api_key=os.getenv("groq_api"),
+        api_key=api_key,
         temperature=0.7,
         model="openai/gpt-oss-120b"
     )
@@ -95,21 +105,25 @@ def listen():
 
 TOOL_LLMS = [
 
-
-    ChatCerebras(
-        model="gpt-oss-120b",
-        api_key=os.getenv("CEREBRAS_API_KEY"),
-        temperature=0.2
+    ChatGroq(
+        model="openai/gpt-oss-120b",
+        api_key=os.getenv("GROQ_API_KEY"),
     ),
 
 
+    ChatCerebras(
+        model="gpt-oss-120b",
+        api_key=os.getenv("CEREBRAS_API_KEY2"),
+        temperature=0.2
+    ),
 
-
+    # Independent fallback when both Cerebras accounts are out of quota.
     ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=os.getenv("GEMINI_KEY_5"),
         temperature=0.2
     ),
+
 ]
 
 
@@ -140,17 +154,27 @@ current_llm_idx = 0
 
 def agent(state: TarzState) -> dict:
     global current_llm_idx
+    failures = []
     for _ in range(len(TOOL_LLMS)):
         try:
             llm = TOOL_LLMS[current_llm_idx].bind_tools(TOOLS)
             response = llm.invoke(state["messages"])
             return {"messages": [response]}
         except Exception as e:
-            if "429" in str(e) or "rate" in str(e).lower():
+            provider = type(TOOL_LLMS[current_llm_idx]).__name__
+            err = str(e).lower()
+            failures.append(f"{provider}: {str(e)[:300]}")
+            if "429" in err or "rate" in err or "402" in err or "payment" in err or "quota" in err:
                 current_llm_idx = (current_llm_idx + 1) % len(TOOL_LLMS)
                 continue
-            raise
-    raise RuntimeError("all tool LLMs failed")
+            raise RuntimeError(f"{provider} tool model failed: {e}") from e
+
+    # Never return None here. Returning no graph update leaves the user's
+    # HumanMessage as the last message, which makes TARZ echo the input.
+    raise RuntimeError(
+        "All tool models are unavailable. Provider errors: " +
+        " | ".join(failures)
+    )
 
 
 def chat(state: TarzState) -> dict:
@@ -210,8 +234,11 @@ Relevant memories:
 
 def main():
     while True:
-
-        user_input = listen()
+        try:
+            user_input = listen()
+        except EOFError:
+            # Allows clean exit when input is piped or the terminal closes.
+            break
 
         if not user_input:
             continue
