@@ -61,9 +61,9 @@ def _spotify_search(query: str):
     time.sleep(1.2)
 
 
-def _find_with_retry():
+def _find_with_retry(target):
     for i in range(3):
-        result = _click_at()
+        result = _click_at(target)
         if result["found"]:
             return result
         print(
@@ -76,7 +76,7 @@ def _find_with_retry():
 def spotify_play_song(song_name: str) -> str:
     """Play a specific song on Spotify by name (optionally include artist)."""
     _spotify_search(song_name)
-    result = _find_with_retry()
+    result = _find_with_retry("green play button")
     if not result["found"]:
         return f"Searched for '{song_name}' but couldn't find the play button"
     _click_at("green play button")

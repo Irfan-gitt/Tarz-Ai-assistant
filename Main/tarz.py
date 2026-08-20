@@ -39,6 +39,8 @@ from Actions.execute_action import type_text, press_key, open_app, read_screen, 
 from Tools.memory import save_imp_context
 from Tools.rag import hybrid_retrieve
 from Actions.execute_action import click
+from pydantic import BaseModel
+
 print("[Init] 3 - rag...")
 
 load_dotenv()
@@ -130,6 +132,10 @@ TOOL_LLMS = [
 class TarzState(TypedDict):
     messages: Annotated[list, add_messages]
     intent: Literal["tool", "chat"]
+
+
+class MessageClassifier(BaseModel):
+    message_category: Literal[]
 
 
 def router(state: TarzState) -> dict:
