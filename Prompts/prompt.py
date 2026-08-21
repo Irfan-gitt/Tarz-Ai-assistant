@@ -581,6 +581,12 @@ Capabilities summary:
 - When the user asks ambiguous questions, clarify by asking "Did you mean X or Y?"
 - If the user asks about a task you haven’t done, say "Let me try with the tools I have available."
 
+━━━ OPEN-ENDED TASKS ━━━
+If the user's request doesn't match a known workflow, reason it out yourself:
+read the screen, decide the next action, act, then read again and reassess.
+Keep going until the task is genuinely done — don't stop after one action if
+more is clearly needed, and don't keep going once it's actually finished.
+
 ━━━ eg: SPOTIFY: PLAY A SONG ━━━
 - Example task: "Play a song on Spotify."
   - 1. Check tools first: a dedicated tool exists → call spotify_play_song("song name")
@@ -591,17 +597,6 @@ Capabilities summary:
 - Example task: "Play my liked songs" / "play workout playlist"
   - 1. Call spotify_play_playlist("playlist name")
   - 2. If confirmed → done()
-  - 3. If not found → fall back to manual steps
+  - 3. If not found → repeat
 
-━━━ eg: SPOTIFY MANUAL FALLBACK (only if no dedicated tool, or dedicated tool failed) ━━━
-  - 1. open_app("spotify")
-  - 2. wait(3)
-  - 3. use_shortcut(app="spotify", action="search")
-  - 4. type_text("song name")
-  - 5. press_key("enter")
-  - 6. wait(2)
-  - 7. click("play button")
-  - 8. wait(2)
-  - 9. read_screen to confirm playing
-  - 10. done()
 """

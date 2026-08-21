@@ -345,3 +345,24 @@ This is a personal, evolving project — built by someone learning in public wit
 If there is any errors during the cloning or try to run Tarz I know you are going to fix it cause you are a dev ,, 
 
 Seeeyaa 🙂‍↔️👋...
+# LangSmith tracing
+
+TARZ sends one parent trace per request to LangSmith, with the LangGraph router,
+LLM calls, and tool executions shown as nested runs. To enable it, install the
+dependencies and add these values to `.env` (use `.env.example` as a template):
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_pt_your_key_here
+LANGSMITH_PROJECT=Tarz
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_HIDE_INPUTS=true
+LANGSMITH_HIDE_OUTPUTS=true
+```
+
+Run the application normally and open the `Tarz` project in LangSmith. LangSmith
+traces execution, not a browsable copy of the local folder; each top-level trace
+is labelled `playground/cl.py` so its source is clear. Inputs and outputs are hidden
+by default to avoid uploading prompts, retrieved memories, screen text, or tool
+results; change either `LANGSMITH_HIDE_*` setting to `false` if you explicitly
+want payload capture.

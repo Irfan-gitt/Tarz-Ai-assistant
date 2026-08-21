@@ -135,7 +135,7 @@ def open_app(app_name: str) -> str:
 
 @tool
 def read_screen(question: str) -> str:
-    """Read and describe what is currently visible on screen."""
+    """Read and describe briefly what is currently visible on screen."""
     return describe_screen(question)
 
 

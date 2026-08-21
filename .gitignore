@@ -4,6 +4,7 @@ venv/
 env/
 .env
 .env.*
+!.env.example
 .vscode/
 *.log
 .DS_Store
