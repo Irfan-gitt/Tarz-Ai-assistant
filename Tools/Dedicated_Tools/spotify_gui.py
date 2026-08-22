@@ -50,6 +50,8 @@ def _find_with_retry(target: str, attempts: int = 3) -> dict:
 def _spotify_search(query: str):
     open_app.invoke({"app_name": "Spotify"})
     time.sleep(6)
+    pyautogui.press("escape")
+    time.sleep(0.5)
     pyautogui.hotkey("ctrl", "l")
     time.sleep(0.3)
     pyautogui.typewrite(query, interval=0.02)
