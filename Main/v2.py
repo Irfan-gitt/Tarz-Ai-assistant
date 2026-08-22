@@ -1,3 +1,4 @@
+
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -27,14 +28,14 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_cerebras import ChatCerebras
 from Prompts.prompt import SYSTEM_PROMPT, SYSTEM
-from Vison.vision import describe_screen
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from Vison.vision import describe_screen, vision_verify_system
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from Tools.gmail import send_email, read_emails, search_emails
 from Tools.calendar_tool import create_event, list_events, delete_event
 from Tools.real_time_data import rt_data
 from Audio.stt import listen as stt_listen
 from Audio.tts import speak
-from Tools.spotify_gui import spotify_play_song, spotify_play_playlist
+from Tools.Dedicated_Tools.spotify_gui import spotify_play_song, spotify_play_playlist
 print("on tools")  # noqa
 from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, clipboard, wait, done
 from Tools.memory import save_imp_context
@@ -50,8 +51,8 @@ load_dotenv()
 # Keep trace structure and source metadata without uploading prompts, retrieved
 # memories, screen text, or tool results. Set either value to "false" in .env
 # only when full payload capture is explicitly wanted.
-os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "true")
-os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "true")
+os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "false")
+os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "false")
 
 
 api_key = os.getenv("GROQ_API_KEY")
@@ -135,6 +136,7 @@ class TarzState(TypedDict):
     category: str
     steps: int
     worker_steps: int
+    next: str
 
 
 class MessageClassifier(BaseModel):
@@ -143,60 +145,109 @@ class MessageClassifier(BaseModel):
         "communication", "dedicated_tool_spotify", "calendar", "media"
     ] = Field(
         default="chat",
-        description="The single best matching category; use chat for normal conversation., and use gui_control if there is no specific tool for a task ",
+        description="The single best matching category; use chat for normal conversation.",
     )
 
 
 MAX_WORKER_STEPS = 6
 
 
+MAX_STEPS = 12
+
+
+class SupervisorDecision(BaseModel):
+    next: Literal["finished", "route"] = Field(
+        description="Whether the task is finished or another action is required."
+    )
+
+    reasoning: str = Field(
+        description="Brief explanation of why this decision was made."
+    )
+
+    instruction: str = Field(
+        description="If another action is needed, describe what should be attempted next."
+    )
+
+
+def verify_completion(expected_outcome: str) -> dict:
+    answer = vision_verify_system(
+        f"Is this currently true on screen: {expected_outcome}? "
+        f"Answer yes or no, then briefly explain why."
+    )
+    confirmed = answer.strip().upper().startswith("YES")
+    return {
+        "confirmed": confirmed,
+        "detail": answer
+    }
+
+
+def supervisor(state: dict) -> dict:
+    steps = state.get("steps", 0)
+
+    if steps >= MAX_STEPS:
+        return {"next": "finished", "steps": steps + 1}
+
+    if steps == 0:
+        return {"next": "route", "steps": steps + 1}
+
+    recent = state["messages"][-6:]
+    tool_ran = any(isinstance(m, ToolMessage) for m in recent)
+
+    if not tool_ran:
+        return {"next": "finished", "steps": steps + 1}
+
+    user_request = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)))
+    answer = verify_completion(user_request)
+    if answer["confirmed"]:
+        return {"next": "finished", "steps": steps + 1}
+
+    return {"next": "route", "steps": steps + 1, "worker_steps": 0}
+
+
+def route_from_supervisor(state: dict) -> str:
+    return state["next"]
+
+
 def route_from_worker(state: TarzState) -> str:
     last = state["messages"][-1]
     if not getattr(last, "tool_calls", None):
-        return "router"
+        return "supervisor"
     if state.get("worker_steps", 0) >= MAX_WORKER_STEPS:
         return "router"
     return "tools"
 
 
 def router(state: TarzState) -> dict:
-    steps = state.get("steps", 0)
-    if steps >= MAX_WORKER_STEPS:
-        return {"category": "finished", "steps": steps + 1}
-
-    last_ai_msg = state["messages"][-1]
-    verification_note = ""
-
-    # If the specialist just claimed something happened, verify it — don't trust the claim blindly
-    if isinstance(last_ai_msg, SystemMessage) and last_ai_msg.content:
-        check = verify_completion(state["messages"][0].content)
-        verification_note = f"\n\nSYSTEM VISION CHECK: {check['detail']}"
-
     classify_llm = llm_plain.with_structured_output(MessageClassifier)
-    result = classify_llm.invoke([
-        SystemMessage(content=(
-            "You are TARZ's request router. Classify the user's request into the single "
-            "best-matching category based on these descriptions:\n\n"
+    try:
+        result = classify_llm.invoke([
+            SystemMessage(content=("You are TARZ's request router. Classify the user's request into the single "
+                                   "best-matching category based on these descriptions:\n\n"
 
-            "chat = Normal conversation, no action needed. Greetings, explanations, "
-            "general knowledge, casual conversation.\n"
-            "system = OS/device actions: volume, alarms, timers, clipboard.\n"
-            "gui_control = Direct computer interaction with no dedicated tool match: "
-            "clicking, typing, opening apps, reading the screen, shortcuts.\n"
-            "info = External/current info: weather, news, live data, translation.\n"
-            "communication = Email/messages when no dedicated app tool matches.\n"
-            "dedicated_tool_spotify = Anything Spotify-specific: play a song, playlist, "
-            "control playback.\n"
-            "calendar = Create, list, update, or delete calendar events.\n"
-            "media = Generic media controls not tied to one app: play/pause, next, previous.\n\n"
+                                   "chat = Normal conversation, no action needed. Greetings, explanations, "
+                                   "general knowledge, casual conversation.\n"
+                                   "system = OS/device actions: volume, alarms, timers, clipboard.\n"
+                                   "gui_control = Direct computer interaction with no dedicated tool match: "
+                                   "clicking, typing, opening apps, reading the screen, shortcuts.\n"
+                                   "info = External/current info: weather, news, live data, translation.\n"
+                                   "communication = Email/messages when no dedicated app tool matches.\n"
+                                   "dedicated_tool_spotify = Anything Spotify-specific: play a song, playlist, "
+                                   "control playback.\n"
+                                   "calendar = Create, list, update, or delete calendar events.\n"
+                                   "media = Generic media controls not tied to one app: play/pause, next, previous.\n\n"
 
-            "DEDICATED TOOL PRIORITY: prefer a dedicated tool category over a generic one "
-            "when the request clearly matches it.\n"
-            "Choose the single most specific matching category." + verification_note
-
-        ))
-    ] + state["messages"][-10:])
-    return {"category": result.message_category, "steps": steps + 1}
+                                   "DEDICATED TOOL PRIORITY: prefer a dedicated tool category over a generic one "
+                                   "when the request clearly matches it.\n"
+                                   "Choose the single most specific matching category."
+                                   )),
+        ] + sanitize_for_plain_llm(state["messages"][-10:]))
+        category = result.message_category if hasattr(
+            result, "message_category") else result.get("message_category", "chat")
+    except Exception as e:
+        print(f"[router] classification failed, defaulting to chat: {e}")
+        category = "chat"
+    return {"category": category}
 
 
 def route_edge(state: TarzState) -> str:
@@ -206,32 +257,19 @@ def route_edge(state: TarzState) -> str:
 current_llm_idx = 0
 
 
-def verify_completion(expected_outcome: str) -> dict:
-    """
-    System-only vision check. Never bound as a tool, never callable by the LLM —
-    the graph itself invokes this to ground-truth a completion claim before
-    trusting it.
-    """
-    answer = describe_screen(
-        f"Is this currently true on screen: {expected_outcome}? "
-        f"Answer yes or no, then briefly explain why."
-    )
-    return {
-        "confirmed": answer.strip().lower().startswith("yes"),
-        "detail": answer
-    }
-
-
 def make_worker(domain_tools):
     bound = domain_tools + [done]
 
     def worker(state: TarzState) -> dict:
         global current_llm_idx
+        wsteps = state.get("worker_steps", 0)
         failures = []
         for _ in range(len(TOOL_LLMS)):
             try:
                 llm = TOOL_LLMS[current_llm_idx].bind_tools(bound)
-                return {"messages": [llm.invoke(state["messages"])]}
+                response = llm.invoke(state["messages"])
+                # ← added
+                return {"messages": [response], "worker_steps": wsteps + 1}
             except Exception as e:
                 provider = type(TOOL_LLMS[current_llm_idx]).__name__
                 err = str(e).lower()
@@ -246,12 +284,32 @@ def make_worker(domain_tools):
 
 
 def chat(state: TarzState) -> dict:
-    return {"messages": [llm_plain.invoke(state["messages"])]}
+    return {"messages": [llm_plain.invoke(sanitize_for_plain_llm(state["messages"]))]}
+
+
+def sanitize_for_plain_llm(messages) -> list:
+    out = []
+    for m in messages:
+        if isinstance(m, (SystemMessage, HumanMessage)):
+            out.append(m)
+        elif isinstance(m, AIMessage):
+            if getattr(m, "tool_calls", None):
+                calls = ", ".join(
+                    f"{tc['name']}({tc.get('args', {})})" for tc in m.tool_calls)
+                out.append(AIMessage(content=f"[called tool(s): {calls}]"))
+            elif m.content:
+                out.append(AIMessage(content=m.content))
+        elif isinstance(m, ToolMessage):
+            name = getattr(m, "name", None) or "tool"
+            out.append(AIMessage(content=f"[{name} result: {m.content}]"))
+    return out
 
 
 graph = StateGraph(TarzState)
 graph.add_node("router", router)
 graph.add_node("chat", chat)
+graph.add_node("supervisor", supervisor)
+
 
 for domain, tools in DOMAIN_TOOLS.items():
     if domain in ("dedicated_tool_telegram", "dedicated_tool_discord", "dedicated_tool_browser"):
@@ -259,11 +317,18 @@ for domain, tools in DOMAIN_TOOLS.items():
     tools_node = f"{domain}_tools"
     graph.add_node(domain, make_worker(tools))
     graph.add_node(tools_node, ToolNode(tools + [done]))
-    graph.add_conditional_edges(domain, tools_condition, {
-                                "tools": tools_node, END: END})
+    graph.add_conditional_edges(domain, route_from_worker, {
+        "tools": tools_node,
+        "supervisor": "supervisor",
+        "router": "router",
+    })
     graph.add_edge(tools_node, domain)
 
-graph.add_edge(START, "router")
+graph.add_edge(START, "supervisor")
+graph.add_conditional_edges("supervisor", route_from_supervisor, {
+    "route": "router", "finished": END
+})
+
 graph.add_conditional_edges("router", route_edge, {
     "chat": "chat", "system": "system", "gui_control": "gui_control",
     "info": "info", "communication": "communication",
@@ -314,11 +379,14 @@ Relevant memories:
 {memory_text}
 """
 
-    result = app.invoke({"messages": [
-        SystemMessage(content=system, id="system"),
-        HumanMessage(content=user_input)
-
-    ]}, config={"configurable": {"thread_id": "user"}})
+    result = app.invoke({
+        "messages": [
+            SystemMessage(content=system, id="system"),
+            HumanMessage(content=user_input)
+        ],
+        "steps": 0,
+        "worker_steps": 0,
+    }, config={"configurable": {"thread_id": "user"}})
 
     response = extract_text(result["messages"][-1].content)
 
@@ -331,7 +399,7 @@ def main():
         try:
             user_input = listen()
         except EOFError:
-            # Allows clean exit when input is piped or the terminal closes.
+
             break
 
         if not user_input:
