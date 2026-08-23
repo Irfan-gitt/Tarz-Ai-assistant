@@ -67,7 +67,7 @@ def whatsapp_call_contact(contact_name: str) -> str:
     _open_and_search(contact_name)
 
     call_btn = _find_with_retry(
-        "call button on top right side (not with the left one) with a telephone icon")
+        "call button on top right side with a telephone icon, (not with the left one ignore the left sided one)")
     if not call_btn["found"]:
         return f"Opened chat with {contact_name} but couldn't find the call button"
 
