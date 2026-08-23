@@ -63,7 +63,8 @@ def _spotify_search(query: str):
 def spotify_play_song(song_name: str) -> str:
     """Play a specific song on Spotify by name (optionally include artist)."""
     _spotify_search(song_name)
-    result = _find_with_retry("green play button")
+    result = _find_with_retry(
+        "green play button inside spotify window (ignore taskbar and other windows elements or icons have green colour)")
     if not result["found"]:
         return f"Searched for '{song_name}' but couldn't find the play button"
     return f"Playing '{song_name}' on Spotify"
