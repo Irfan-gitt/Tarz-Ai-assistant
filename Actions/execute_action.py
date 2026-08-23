@@ -129,7 +129,7 @@ def open_app(app_name: str) -> str:
     pyautogui.write(app_name, interval=0.05)
     time.sleep(1)
     pyautogui.press("enter")
-    time.sleep(7)
+    time.sleep(4)
     return f"Opened {app_name}"
 
 
