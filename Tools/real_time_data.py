@@ -1,3 +1,4 @@
+from tavily import TavilyClient
 from ddgs import DDGS
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
@@ -51,6 +52,45 @@ def _local_date_time_answer(query: str) -> str | None:
     return f"The current time is {now.strftime('%I:%M %p')} in {timezone_name}."
 
 
+tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+
+
+def _search_web(query: str):
+    """
+    Returns (normalized_results, direct_answer, source).
+    normalized_results: list of {"title": ..., "body": ...} regardless of provider.
+    direct_answer: Tavily's synthesized answer if available, else None.
+    source: "tavily" | "ddgs" | "none" — useful for debugging/logging.
+    """
+    try:
+        result = tavily.search(
+            query=f"{query} current latest",
+            max_results=5,
+            include_answer=True,
+        )
+        raw = result.get("results", [])
+        if raw or result.get("answer"):
+            normalized = [
+                {"title": r.get("title", ""), "body": r.get("content", "")}
+                for r in raw
+            ]
+            return normalized, result.get("answer"), "tavily"
+    except Exception as e:
+        print(f"[rt_data] Tavily failed, falling back to DDGS: {e}")
+
+    try:
+        raw = DDGS().text(f"{query} current latest",
+                          max_results=5, timelimit="w")
+        normalized = [
+            {"title": r.get("title", ""), "body": r.get("body", "")}
+            for r in raw
+        ]
+        return normalized, None, "ddgs"
+    except Exception as e:
+        print(f"[rt_data] DDGS also failed: {e}")
+        return [], None, "none"
+
+
 @tool
 def rt_data(query: str) -> str:
     """
@@ -96,32 +136,41 @@ def rt_data(query: str) -> str:
     - Company announcements
     - Internet trends
     - Any information that requires up-to-date knowledge.
+
+    CRITICAL: Never assume a future-sounding event hasn't happened yet based on
+    your own training knowledge. Championships, elections, and scheduled events
+    become real, checkable facts once their date passes — and you do not
+    reliably know today's date without checking the system prompt. If the user
+    explicitly asks you to use this tool, or asks about the outcome of any
+    named event (election, match, tournament, launch), call this tool — never
+    refuse based on your own assumption that "it hasn't happened yet."
     """
     try:
         local_answer = _local_date_time_answer(query)
         if local_answer:
             return local_answer
 
-        results = DDGS().text(
-            f"{query} current latest", max_results=5, timelimit="w")
+        results, direct_answer, source = _search_web(query)
 
-        if not results:
+        if not results and not direct_answer:
             return "No news found for that topic"
-
-        # output frmt
 
         output = f"\n User: {query.upper()}\n"
         output += "=" * 50 + "\n\n"
-
         for i, r in enumerate(results, 1):
             output += f"{i}. {r['title']}\n"
             output += f"   {r['body'][:200]}...\n"
 
-        # LLM summary
-
-        context = "\n".join([f"- {r['title']}: {r['body']}" for r in results])
-
-        summary = llm.invoke(f"""
+        if direct_answer:
+            # Tavily already synthesized an answer — use it directly, skip the extra LLM call
+            print("[rt_data] Using Tavily's direct answer: ")
+            summary = direct_answer
+        else:
+            # Fell back to DDGS, which has no built-in synthesis — summarize manually
+            print("[rt_data] Summarizing DDGS results with LLM...")
+            context = "\n".join(
+                f"- {r['title']}: {r['body']}" for r in results)
+            summary = llm.invoke(f"""
 You are a real-time information assistant.
 
 The user asked:
@@ -148,6 +197,8 @@ Search Results:
 
         output += "=" * 50 + "\n"
         output += f"📋 Here is the summary Boss:\n{summary}\n"
+        # remove this line once you trust it, useful while testing
+        output += f"\n(source: {source})\n"
 
         return output
 
