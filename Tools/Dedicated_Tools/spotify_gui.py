@@ -56,7 +56,7 @@ def _spotify_search(query: str):
     time.sleep(0.3)
     pyautogui.typewrite(query, interval=0.02)
     pyautogui.press("enter")
-    time.sleep(1.2)
+    time.sleep(1.5)
 
 
 @tool
