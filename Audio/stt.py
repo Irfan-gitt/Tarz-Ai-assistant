@@ -1,47 +1,128 @@
-from faster_whisper import WhisperModel
-import sounddevice as sd
-import soundfile as sf
+# Audio/stt_live.py
 import os
-import torch
+import asyncio
+import sounddevice as sd
 
-os.makedirs("temp", exist_ok=True)
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-compute_type = "int8_float16" if device == "cuda" else "int8"
+load_dotenv()
 
-print(f"[STT] Loading Whisper model on {device.upper()}...")
-model = WhisperModel(
-    "large-v3-turbo",
-    device=device,
-    compute_type=compute_type
-)
-print(f"[STT] Model ready on {device.upper()}")
+GEMINI_KEYS = [
+    os.getenv("GEMINI_KEY_1"),
+    os.getenv("GEMINI_KEY_2"),
+    os.getenv("GEMINI_KEY_3"),
+    os.getenv("GEMINI_KEY_4"),
+]
+GEMINI_KEYS = [k for k in GEMINI_KEYS if k]
+
+if not GEMINI_KEYS:
+    raise RuntimeError("No GEMINI_KEY_* environment variables found")
+
+current_key_idx = 0
+
+# Verify against ai.google.dev/gemini-api/docs/live before relying on it —
+# not confirmed current, see note above.
+MODEL = "gemini-3.5-transcribe-live"
+
+SAMPLE_RATE = 16000
+CHANNELS = 1
+CHUNK_MS = 100
+CHUNK_FRAMES = SAMPLE_RATE * CHUNK_MS // 1000
 
 
-def listen() -> str:
-    """Record mic and transcribe to text."""
-    sample_rate = 16000
-    duration = 4
+def _get_client():
+    return genai.Client(api_key=GEMINI_KEYS[current_key_idx])
 
-    print("[STT] Listening...")
-    audio = sd.rec(
-        int(duration * sample_rate),
-        samplerate=sample_rate,
-        channels=1,
-        dtype="float32"
+
+async def _stream_one_utterance() -> str:
+    """
+    Connects, streams mic audio, returns the first FINAL transcript
+    (one complete user utterance = one turn). Rotates across GEMINI_KEYS
+    on auth/expiry/quota failures, retrying the connection with the next key.
+    """
+    global current_key_idx
+
+    config = types.LiveConnectConfig(
+        response_modalities=["TEXT"],
+        input_audio_transcription=types.AudioTranscriptionConfig(),
     )
-    sd.wait()
 
-    tmp_path = os.path.join("temp", f"stt_{os.getpid()}.wav")
+    last_error = None
 
-    sf.write(tmp_path, audio, sample_rate)
-    segments, _ = model.transcribe(tmp_path, language="en")
-    text = " ".join([s.text for s in segments]).strip()
+    for attempt in range(len(GEMINI_KEYS)):
+        client = _get_client()
+        try:
+            async with client.aio.live.connect(model=MODEL, config=config) as session:
+                print(f"🟢 Gemini Live connected (key #{current_key_idx + 1})")
+                result = {"text": None}
 
-    try:
-        os.remove(tmp_path)
-    except Exception as e:
-        print(f"[STT] Cleanup warning: {e}")
+                async def receive():
+                    async for response in session.receive():
+                        server_content = response.server_content
+                        if not server_content:
+                            continue
+                        interim = server_content.interim_input_transcription
+                        if interim:
+                            print(f"\r🎤 {interim.text}", end="", flush=True)
+                        final = server_content.input_transcription
+                        if final:
+                            print(f"\n✅ FINAL: {final.text}")
+                            result["text"] = final.text
+                            return
 
-    print(f"[STT] Heard: {text}")
-    return text
+                async def send_mic():
+                    loop = asyncio.get_running_loop()
+                    queue = asyncio.Queue()
+
+                    def callback(indata, frames, time, status):
+                        if status:
+                            print("Audio:", status)
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait, bytes(indata))
+
+                    print("🎤 Speak now...")
+                    with sd.RawInputStream(
+                        samplerate=SAMPLE_RATE,
+                        blocksize=CHUNK_FRAMES,
+                        channels=CHANNELS,
+                        dtype="int16",
+                        callback=callback,
+                    ):
+                        while result["text"] is None:
+                            audio_chunk = await queue.get()
+                            await session.send_realtime_input(
+                                audio=types.Blob(
+                                    data=audio_chunk, mime_type="audio/pcm;rate=16000")
+                            )
+
+                recv_task = asyncio.create_task(receive())
+                send_task = asyncio.create_task(send_mic())
+
+                await recv_task
+                send_task.cancel()
+                try:
+                    await send_task
+                except asyncio.CancelledError:
+                    pass
+
+                return result["text"] or ""
+
+        except Exception as e:
+            err = str(e).lower()
+            last_error = e
+            if any(x in err for x in ("401", "403", "429", "quota", "expired", "invalid", "permission")):
+                print(
+                    f"[STT] Key #{current_key_idx + 1} failed ({e}), rotating...")
+                current_key_idx = (current_key_idx + 1) % len(GEMINI_KEYS)
+                continue
+            raise
+
+    raise RuntimeError(f"All Gemini keys failed for live STT: {last_error}")
+
+
+def live_listen() -> str:
+    """Drop-in sync replacement for input('You:') — blocks until one spoken
+    utterance is transcribed, rotating across keys on connection failure."""
+    return asyncio.run(_stream_one_utterance())

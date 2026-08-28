@@ -67,3 +67,22 @@ def save_context(ctx: dict, user_input: str):
 def save_imp_context(user_input: str, ai_reply: str):
     ctx = context_agent(user_input, ai_reply)
     return save_context(ctx, user_input)
+
+
+def show_all_context():
+    data = context_collection.get()
+
+    print("\n========== SAVED MEMORY ==========")
+
+    if not data["ids"]:
+        print("No memories saved yet.")
+        return
+
+    for i, memory_id in enumerate(data["ids"]):
+        print(f"\nID: {memory_id}")
+        print(f"Kind: {data['metadatas'][i]['kind']}")
+        print(f"Memory: {data['documents'][i]}")
+        print(f"Source: {data['metadatas'][i]['source_input']}")
+        print(f"Time: {data['metadatas'][i]['timestamp']}")
+
+    print("\n==================================")

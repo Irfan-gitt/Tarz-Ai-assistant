@@ -32,15 +32,10 @@ VISION_MODELS = [
 ]
 
 
-def take_screenshot():
-    screenshot = pyautogui.screenshot()
-    screenshot.save("screen.png")
-    return "screen.png"
-
-
 def describe_screen(question):
-    take_screenshot()
-    with open("screen.png", "rb") as f:
+    screenshot = pyautogui.screenshot()
+    screenshot.save("screen_vision.png")
+    with open("screen_vision.png", "rb") as f:
         img_b64 = base64.b64encode(f.read()).decode()
 
     for model in VISION_MODELS:

@@ -1,38 +1,50 @@
 from Tools.memory import context_collection
-from rank_bm25 import BM25Okapi
+from sentence_transformers import CrossEncoder
+
+import os
+os.environ["HF_HUB_OFFLINE"] = "1"
+# Lazy-loaded — the model is ~80MB and takes a moment to load from disk.
+# Loading it at import time would add that delay to every TARZ startup,
+# even for turns that never touch memory. Load once, on first real use.
+_reranker = None
 
 
-def hybrid_retrieve(query: str, kind: str = None, n: int = 5) -> list[str]:
-    where = {"kind": kind} if kind else None
-    results = context_collection.get(where=where)
-    all_docs, all_metas = results["documents"], results["metadatas"]
-    if not all_docs:
+def _get_reranker():
+    global _reranker
+    if _reranker is None:
+        print("[Memory] Loading reranker model (first use only)...")
+        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _reranker
+
+
+def reranked_retrieve(query: str, top_k: int = 5, candidate_k: int = 20) -> list[str]:
+    """
+    Two-stage retrieval:
+    1. RECALL — pull a wide candidate set from Chroma's vector similarity
+       (fast, but embedding distance alone is a blunt relevance signal).
+    2. RERANK — score each candidate against the query with a cross-encoder,
+       which reads query+document together (real semantic relevance, not
+       just vector proximity), then reorder by that score.
+    """
+    results = context_collection.query(
+        query_texts=[query],
+        n_results=candidate_k,
+    )
+
+    documents = results.get("documents", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+
+    if not documents:
         return []
 
-    # vector search ranking (meaning-based)
-    vector_ranked = context_collection.query(
-        query_texts=[query], where=where, n_results=len(all_docs))["documents"][0]
+    reranker = _get_reranker()
+    pairs = [[query, doc] for doc in documents]
+    scores = reranker.predict(pairs)
 
-    # BM25 ranking (exact keyword-based)
-    tokenized = [doc.lower().split() for doc in all_docs]
-    bm25 = BM25Okapi(tokenized)
-    scores = bm25.get_scores(query.lower().split())
-    bm25_ranked = [doc for _, doc in sorted(
-        zip(scores, all_docs), reverse=True)]
+    ranked = sorted(
+        zip(documents, metadatas, scores),
+        key=lambda x: x[2],
+        reverse=True,
+    )
 
-    timestamps = {doc: meta["timestamp"]
-                  for doc, meta in zip(all_docs, all_metas)}
-    recency_ranked = sorted(
-        all_docs, key=lambda d: timestamps[d], reverse=True)
-  # merge both rankings — reciprocal rank fusion
-    fused = {}
-    for rank, doc in enumerate(vector_ranked):
-        fused[doc] = fused.get(doc, 0) + 1 / (60 + rank)
-    for rank, doc in enumerate(bm25_ranked):
-        fused[doc] = fused.get(doc, 0) + 1 / (60 + rank)
-    for rank, doc in enumerate(recency_ranked):
-        # smaller weight — nudge, not override
-        fused[doc] = fused.get(doc, 0) + 0.3 / (60 + rank)
-
-    merged = sorted(fused.items(), key=lambda x: x[1], reverse=True)
-    return [doc for doc, _ in merged[:n]]
+    return [doc for doc, meta, score in ranked[:top_k]]

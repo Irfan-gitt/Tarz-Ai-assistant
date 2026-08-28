@@ -93,6 +93,7 @@ def find_and_click(target):
         px, py = int(x), int(y)
 
     pyautogui.moveTo(px, py, duration=0.3)
+    time.sleep(0.2)
     pyautogui.click()
 
     return {"found": False}

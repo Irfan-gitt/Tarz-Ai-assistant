@@ -1,4 +1,3 @@
-# Tools/spotify_gui.py
 import time
 import pyautogui
 from langchain_core.tools import tool
@@ -64,7 +63,7 @@ def spotify_play_song(song_name: str) -> str:
     """Play a specific song on Spotify by name (optionally include artist)."""
     _spotify_search(song_name)
     result = _find_with_retry(
-        "green play button ▶︎ ")
+        f"the green circular play button on the top search result card, for{song_name}")
     if not result["found"]:
         return f"Searched for '{song_name}' but couldn't find the play button"
     return f"Playing '{song_name}' on Spotify"
