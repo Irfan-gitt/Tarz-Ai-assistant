@@ -6,7 +6,7 @@ import sounddevice as sd
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-
+from Audio.wake_word import get_best_input_device
 load_dotenv()
 
 GEMINI_KEYS = [
@@ -82,21 +82,29 @@ async def _stream_one_utterance() -> str:
                         loop.call_soon_threadsafe(
                             queue.put_nowait, bytes(indata))
 
+                    device, hostapi_name = get_best_input_device()   # ← unpack the tuple
+
                     print("🎤 Speak now...")
-                    with sd.RawInputStream(
+
+                    stream_kwargs = dict(
+                        device=device,
                         samplerate=SAMPLE_RATE,
                         blocksize=CHUNK_FRAMES,
                         channels=CHANNELS,
                         dtype="int16",
                         callback=callback,
-                    ):
+                    )
+                    if hostapi_name == "Windows WASAPI":
+                        stream_kwargs["extra_settings"] = sd.WasapiSettings(
+                            auto_convert=True)
+
+                    with sd.RawInputStream(**stream_kwargs):
                         while result["text"] is None:
                             audio_chunk = await queue.get()
                             await session.send_realtime_input(
-                                audio=types.Blob(
-                                    data=audio_chunk, mime_type="audio/pcm;rate=16000")
+                                audio=types.Blob(data=audio_chunk,
+                                                 mime_type="audio/pcm;rate=16000")
                             )
-
                 recv_task = asyncio.create_task(receive())
                 send_task = asyncio.create_task(send_mic())
 

@@ -24,6 +24,7 @@ def search_news(query: str) -> str:
     Examples:
     "what's happening with iran and america" → search_news("iran america war update")
     "latest AI news" → search_news("artificial intelligence news today")
+
     """
     try:
         results = DDGS().news(query, max_results=5, timelimit="w")
