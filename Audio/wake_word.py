@@ -1,17 +1,16 @@
-import winsound
-import collections
-import queue
+# Audio/wake_word.py
+import os
 import numpy as np
 import sounddevice as sd
-from faster_whisper import WhisperModel
-from silero_vad import load_silero_vad, get_speech_timestamps
+import pygame
+import openwakeword
+from openwakeword.model import Model
+
 from Audio.ducking import protect_process_from_ducking
 
 SAMPLE_RATE = 16000
-BLOCK_MS = 30
-BLOCK_SAMPLES = int(SAMPLE_RATE * BLOCK_MS / 1000)
-WINDOW_SECONDS = 2.0
-CHECK_INTERVAL_BLOCKS = int(WINDOW_SECONDS * 1000 / BLOCK_MS)
+FRAME_SAMPLES = 1280  # openWakeWord expects ~80ms chunks at 16kHz — verify against
+# its docs if you hit a shape-mismatch error, this may shift by version
 
 BT_HEADSET_HINTS = ("headset", "hands-free", "hfp", "hsp", "hf audio")
 VIRTUAL_DEVICE_HINTS = (
@@ -19,22 +18,12 @@ VIRTUAL_DEVICE_HINTS = (
 PREFERRED_HOSTAPI_ORDER = ["Windows WASAPI",
                            "Windows DirectSound", "MME", "Windows WDM-KS"]
 
-vad_model = load_silero_vad()
-whisper_tiny = WhisperModel("tiny", device="cpu", compute_type="int8")
-
-_audio_q = queue.Queue()
 _selected_device = None
 _selected_hostapi = None
 
 
 def get_best_input_device():
-    """
-    Auto-selects a real hardware microphone, excluding Bluetooth headset
-    mics AND virtual/mapper devices (which silently follow the OS default
-    input, including a BT headset if that's the current Windows default).
-    Returns (device_index, hostapi_name) — hostapi_name tells the caller
-    whether WASAPI-specific stream settings are safe to apply.
-    """
+    """Unchanged from before — real hardware mic, avoiding BT headsets and virtual/mapper devices."""
     global _selected_device, _selected_hostapi
     if _selected_device is not None:
         return _selected_device, _selected_hostapi
@@ -77,23 +66,32 @@ def get_best_input_device():
     return idx, hostapi_name
 
 
-def _callback(indata, frames, time_info, status):
-    if status:
-        print("Mic status:", status)
-    _audio_q.put(indata.copy().flatten())
+# ─── Wake word engine setup ───
+
+# bundled options: "hey_jarvis", "alexa", "hey_mycroft"
+WAKE_MODEL_NAME = "hey_jarvis"
+DETECTION_THRESHOLD = 0.5
+
+# one-time download on first run, cached after
+openwakeword.utils.download_models()
+oww_model = Model(wakeword_models=[WAKE_MODEL_NAME])
+
+
+_WAKE_CHIME_PATH = r"Audio\beep.wav"
+
+
+def _play_wake_beep():
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
+    pygame.mixer.Sound(_WAKE_CHIME_PATH).play()
 
 
 _ducking_protected = False
 
 
-def _play_wake_beep():
-    winsound.Beep(800, 100)
-    winsound.Beep(1200, 100)
-
-
 def wait_for_wake_word():
-    ring = collections.deque(maxlen=int(WINDOW_SECONDS * SAMPLE_RATE))
-    print("👂 Always listening for wake word (say 'Tarz')...")
+    print(
+        f"👂 Always listening for wake word (say '{WAKE_MODEL_NAME.replace('_', ' ')}')...")
 
     device, hostapi_name = get_best_input_device()
 
@@ -101,40 +99,28 @@ def wait_for_wake_word():
         device=device,
         samplerate=SAMPLE_RATE,
         channels=1,
-        dtype="float32",
-        blocksize=BLOCK_SAMPLES,
-        callback=_callback,
+        dtype="int16",
+        blocksize=FRAME_SAMPLES,
     )
     if hostapi_name == "Windows WASAPI":
         stream_kwargs["extra_settings"] = sd.WasapiSettings(auto_convert=True)
 
-    with sd.InputStream(**stream_kwargs):
+    with sd.InputStream(**stream_kwargs) as stream:
         global _ducking_protected
         if not _ducking_protected:
             protect_process_from_ducking("Spotify.exe")
             _ducking_protected = True
 
-        blocks_since_check = 0
+        oww_model.reset()  # clear any stale prediction buffer from a previous call
+
         while True:
-            block = _audio_q.get()
-            ring.extend(block)
-            blocks_since_check += 1
+            audio_chunk, _ = stream.read(FRAME_SAMPLES)
+            audio_chunk = audio_chunk.flatten()
 
-            if blocks_since_check < CHECK_INTERVAL_BLOCKS or len(ring) < ring.maxlen:
-                continue
-            blocks_since_check = 0
+            prediction = oww_model.predict(audio_chunk)
+            score = prediction[WAKE_MODEL_NAME]
 
-            window = np.array(ring, dtype=np.float32)
-            speech_ts = get_speech_timestamps(
-                window, vad_model, sampling_rate=SAMPLE_RATE)
-            if not speech_ts:
-                continue
-
-            segments, _ = whisper_tiny.transcribe(window, language="en")
-            text = " ".join(seg.text for seg in segments).lower()
-            print(f"[debug] heard: {text!r}")
-
-            if "hey" in text:
-                print(f"🎯 Wake word detected in: {text!r}")
+            if score > DETECTION_THRESHOLD:
+                print(f"🎯 Wake word detected! (score={score:.2f})")
                 _play_wake_beep()
                 return

@@ -1,8 +1,10 @@
+import os  # noqa
+os.environ["HF_HUB_OFFLINE"] = "1"  # noqa
+
 from Tools.memory import context_collection
 from sentence_transformers import CrossEncoder
 
-import os
-os.environ["HF_HUB_OFFLINE"] = "1"
+
 # Lazy-loaded — the model is ~80MB and takes a moment to load from disk.
 # Loading it at import time would add that delay to every TARZ startup,
 # even for turns that never touch memory. Load once, on first real use.
