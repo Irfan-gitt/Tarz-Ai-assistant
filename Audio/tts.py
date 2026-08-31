@@ -1,46 +1,86 @@
+import random
 import os
 import io
 import re
 import sounddevice as sd
 import soundfile as sf
+import pyaudio
 from groq import Groq
+from cartesia import Cartesia
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+cartesia_client = Cartesia(api_key=os.getenv("CARTESIA_API_KEY"))
 
-MODEL = "canopylabs/orpheus-v1-english"
-VOICE = "troy"
+GROQ_MODEL = "canopylabs/orpheus-v1-english"
+GROQ_VOICE = "troy"
+CARTESIA_VOICE_ID = "86e30c1d-714b-4074-a1f2-1cb6b552fb49"
 
 _MARKDOWN_STRIP = re.compile(r'[*_`#]')
 _URL_STRIP = re.compile(r'https?://\S+')
 
 
+FALLBACK_MESSAGES = [
+    "Looks like first guy fall into sleep so iam here to assist you.",
+    "Oops, the other guy just went to sleep. Good thing I am here.",
+    "Yeah... he is gone ,iam here until he returns ..,, he is kinda lasy ",
+    "Iam again here ..."
+]
+
+
 def _clean_for_speech(text: str) -> str:
-    """Strip markdown/links before TTS — reading '**Sent**' or a raw URL
-    out loud sounds broken even though it looks fine on screen."""
     text = _URL_STRIP.sub("", text)
     text = _MARKDOWN_STRIP.sub("", text)
     return text.strip()
 
 
+def _speak_groq(text: str):
+    response = groq_client.audio.speech.create(
+        model=GROQ_MODEL, voice=GROQ_VOICE, input=text, response_format="wav",
+    )
+    data, samplerate = sf.read(io.BytesIO(response.read()))
+    sd.play(data, samplerate)
+    sd.wait()
+
+
+def _speak_cartesia(text: str):
+    p = pyaudio.PyAudio()
+    stream = p.open(format=pyaudio.paFloat32,
+                    channels=1, rate=44100, output=True)
+    try:
+        with cartesia_client.tts.websocket_connect() as connection:
+            ctx = connection.context(
+                model_id="sonic-3",
+                voice={"mode": "id", "id": CARTESIA_VOICE_ID},
+                output_format={"container": "raw",
+                               "encoding": "pcm_f32le", "sample_rate": 44100},
+                language="en",
+            )
+            ctx.push(text)
+            ctx.no_more_inputs()
+            for response in ctx.receive():
+                if response.type == "chunk" and response.audio:
+                    stream.write(response.audio)
+    finally:
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+
+
 def speak(text: str):
-    """Convert text to speech via Groq's Orpheus TTS and play it immediately."""
     text = _clean_for_speech(text)
     if not text:
         return
     try:
-        response = client.audio.speech.create(
-            model=MODEL,
-            voice=VOICE,
-            input=text,
-            response_format="wav",
-        )
-        audio_bytes = response.read()
-        data, samplerate = sf.read(io.BytesIO(audio_bytes))
-        sd.play(data, samplerate)
-        sd.wait()   # blocking — see note below on why this matters
+        _speak_groq(text)
     except Exception as e:
-        # never crash the whole loop over a TTS hiccup
-        print(f"[TTS] Failed: {e}")
+        print(f"[TTS] Groq failed ({e}), falling back to Cartesia")
+        try:
+
+            fallback_message = random.choice(FALLBACK_MESSAGES)
+            _speak_cartesia(fallback_message)
+            _speak_cartesia(text)
+        except Exception as e2:
+            print(f"[TTS] Cartesia also failed: {e2}")

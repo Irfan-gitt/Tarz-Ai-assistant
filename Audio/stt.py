@@ -83,8 +83,13 @@ async def _stream_one_utterance() -> str:
                         loop.call_soon_threadsafe(
                             queue.put_nowait, bytes(indata))
 
-                    device, hostapi_name = get_best_input_device()   # ← unpack the tuple
-                    _play_wake_beep()
+                        # int16 PCM -> normalized RMS level for the orb
+                        samples = np.frombuffer(indata, dtype=np.int16).astype(
+                            np.float32) / 32768.0
+                        rms = float(np.sqrt(np.mean(samples ** 2)))
+                        get_orb().update_level(min(rms * 4, 1.0))
+
+                    device, hostapi_name = get_best_input_device()
                     print("🎤 Speak now...")
 
                     stream_kwargs = dict(
@@ -103,8 +108,8 @@ async def _stream_one_utterance() -> str:
                         while result["text"] is None:
                             audio_chunk = await queue.get()
                             await session.send_realtime_input(
-                                audio=types.Blob(data=audio_chunk,
-                                                 mime_type="audio/pcm;rate=16000")
+                                audio=types.Blob(
+                                    data=audio_chunk, mime_type="audio/pcm;rate=16000")
                             )
                 recv_task = asyncio.create_task(receive())
                 send_task = asyncio.create_task(send_mic())

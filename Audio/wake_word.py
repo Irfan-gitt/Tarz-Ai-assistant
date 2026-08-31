@@ -7,7 +7,7 @@ import sounddevice as sd
 import pygame
 from faster_whisper import WhisperModel
 from silero_vad import load_silero_vad, get_speech_timestamps
-
+from Audio.orb_overlay import get_orb
 from Audio.ducking import protect_process_from_ducking
 
 SAMPLE_RATE = 16000
@@ -144,7 +144,7 @@ def wait_for_wake_word():
 
             if "hey" in text:
                 print(f"🎯 Wake word detected in: {text!r}")
-
+                get_orb().show()
                 return
 
 

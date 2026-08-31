@@ -1,4 +1,5 @@
 
+
 import winreg
 import threading
 from datetime import datetime
@@ -43,7 +44,7 @@ from pydantic import BaseModel, Field
 from Audio.stt import live_listen
 from Audio.wake_word import wait_for_wake_word, wait_for_followup, play_done_chime
 from Audio.tts import speak
-
+from Audio.orb_overlay import get_orb
 print("[Init] 3 - rag...")
 load_dotenv()
 
@@ -485,12 +486,12 @@ def main():
         speak(response)
         play_done_chime()
 
-        # Follow-up mode: keep responding without "Tarz" as long as the
-        # user keeps talking within 5s of each response finishing.
-        while wait_for_followup(timeout=10.0):
+        while wait_for_followup(timeout=5.0):
+
             try:
                 user_input = listen()
             except EOFError:
+                get_orb().hide()
                 return
             if not user_input:
                 break
@@ -498,6 +499,8 @@ def main():
             print("TARZ:", response)
             speak(response)
             play_done_chime()
+
+        get_orb().hide()   # back to silent wake-word-only mode
 
 
 if __name__ == "__main__":

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <style>
+    html,
+    body {
+      margin: 0;
+      background: transparent;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="orb" width="160" height="160"></canvas>
+  <script>
+    const canvas = document.getElementById('orb');
+    const ctx = canvas.getContext('2d');
+    const cx = 80, cy = 80, baseRadius = 55;
+
+    let audioLevel = 0;
+    let hueShift = 0;
+
+    async function initAudio() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+
+      function sample() {
+        analyser.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        audioLevel = avg / 255;
+        requestAnimationFrame(sample);
+      }
+      sample();
+    }
+    initAudio().catch(() => { });
+
+    function draw() {
+      ctx.clearRect(0, 0, 160, 160);
+      hueShift += 0.4;
+
+      const pulse = baseRadius + audioLevel * 18;
+      const glow = 15 + audioLevel * 35;
+
+      const gradient = ctx.createConicGradient((hueShift * Math.PI) / 180, cx, cy);
+      gradient.addColorStop(0.0, '#a855f7');   // purple
+      gradient.addColorStop(0.33, '#3b82f6');  // blue
+      gradient.addColorStop(0.66, '#ec4899');  // pink
+      gradient.addColorStop(1.0, '#f97316');   // orange
+
+      ctx.save();
+      ctx.shadowBlur = glow;
+      ctx.shadowColor = '#a855f7';
+      ctx.beginPath();
+      ctx.arc(cx, cy, pulse, 0, Math.PI * 2);
+      ctx.lineWidth = 4 + audioLevel * 3;
+      ctx.strokeStyle = gradient;
+      ctx.stroke();
+      ctx.restore();
+
+      requestAnimationFrame(draw);
+    }
+    draw();
+  </script>
+</body>
+
+</html>
