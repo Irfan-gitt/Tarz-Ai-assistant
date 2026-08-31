@@ -5,7 +5,7 @@ from Actions.execute_action import open_app
 
 
 @tool
-def telegram_message_user(user, query: str):
+def telegram_message_user(user, query: str) -> str:
     """Opens Telegram and sends a message to the specified user."""
     open_app.invoke({"app_name": "Telegram"})
     time.sleep(3)

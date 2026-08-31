@@ -18,7 +18,6 @@ import time  # noqa
 from groq import Groq  # noqa
 import base64  # noqa
 from openai import OpenAI  # noqa
-from Prompts.prompt import SYSTEM_PROMPT  # noqa
 print("[Actions] 1 - pyautogui...")  # noqa
 import pyautogui  # noqa
 import time  # noqa
@@ -199,15 +198,6 @@ def use_shortcut(app: str, action: str) -> str:
         time.sleep(0.3)
         return f"Used {app}/{action} shortcut"
     return f"No shortcut found for {app}/{action}"
-
-
-@tool
-def detect_mood(message: str) -> str:
-    """Detect user emotional state and respond accordingly."""
-    prompt = SYSTEM_PROMPT + \
-        f"\n\nUser message: {message}\n\nDetect the user's mood and emotional state based on this message. Respond with one or more of these labels only, separated by commas if multiple: happy, sad, stressed, relaxed, angry, excited, bored, anxious."
-    response = llm(prompt)
-    return f"Detected mood: {response.strip()}"
 
 
 @tool

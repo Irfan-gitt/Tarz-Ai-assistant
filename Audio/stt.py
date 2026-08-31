@@ -1,12 +1,13 @@
 # Audio/stt_live.py
+import numpy as np
+from Audio.orb_overlay import get_orb
 import os
 import asyncio
 import sounddevice as sd
-
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from Audio.wake_word import get_best_input_device
+from Audio.wake_word import get_best_input_device, _play_wake_beep
 load_dotenv()
 
 GEMINI_KEYS = [
@@ -83,7 +84,7 @@ async def _stream_one_utterance() -> str:
                             queue.put_nowait, bytes(indata))
 
                     device, hostapi_name = get_best_input_device()   # ← unpack the tuple
-
+                    _play_wake_beep()
                     print("🎤 Speak now...")
 
                     stream_kwargs = dict(
