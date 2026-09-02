@@ -1,10 +1,10 @@
-# Audio/wake_word.py
 import time
 import collections
 import queue
 import numpy as np
 import sounddevice as sd
 import pygame
+import threading
 from faster_whisper import WhisperModel
 from silero_vad import load_silero_vad, get_speech_timestamps
 from Audio.orb_overlay import get_orb
@@ -23,7 +23,8 @@ PREFERRED_HOSTAPI_ORDER = ["Windows WASAPI",
                            "Windows DirectSound", "MME", "Windows WDM-KS"]
 
 vad_model = load_silero_vad()
-# bumped from tiny for accuracy
+
+# currently using this stt as a wakeword ,,
 whisper_tiny = WhisperModel("small", device="cpu", compute_type="int8")
 
 _audio_q = queue.Queue()
@@ -33,6 +34,8 @@ _ducking_protected = False
 
 _WAKE_CHIME_PATH = r"Audio\beep.wav"
 DONE_CHIME_PATH = r"Audio\end_beep.wav"
+
+wake_hotkey_event = threading.Event()
 
 
 def get_best_input_device():
@@ -84,7 +87,7 @@ def _callback(indata, frames, time_info, status):
     _audio_q.put(indata.copy().flatten())
 
 
-def _play_wake_beep():
+def play_wake_beep():
     if not pygame.mixer.get_init():
         pygame.mixer.init()
     pygame.mixer.Sound(_WAKE_CHIME_PATH).play()
@@ -112,7 +115,6 @@ def _open_stream_kwargs():
 
 
 def wait_for_wake_word():
-    """Blocks until 'Tarz' is heard, then plays a chime and returns."""
     ring = collections.deque(maxlen=int(WINDOW_SECONDS * SAMPLE_RATE))
     print("👂 Always listening for wake word (say 'Tarz')...")
 
@@ -125,6 +127,13 @@ def wait_for_wake_word():
         blocks_since_check = 0
         while True:
             block = _audio_q.get()
+
+            if wake_hotkey_event.is_set():
+                wake_hotkey_event.clear()
+                print("⌨️  Wake hotkey pressed — skipping wake word.")
+                get_orb().show()
+                return
+
             ring.extend(block)
             blocks_since_check += 1
 

@@ -1,14 +1,15 @@
 """
 Audio/orb_overlay.py
 
-A floating glowing "listening orb" overlay, matching a Siri/Gemini-style
-rotating rainbow ring — now with outward-radiating ripple pulses while
-you're speaking, a counter-rotating secondary ring for depth, and a
-smooth fade in/out instead of an instant pop.
+A floating glowing "listening orb" overlay — a lit glass sphere with fine
+wavy interference-ripple texture (not colored streaks), a soft diffuse
+glow, a subtle iridescent edge fringe, and a live caption line below it
+on a frosted-glass pill background.
 
 Runs its own PyQt6 QApplication on a dedicated background thread. All
-public methods (show/hide/update_level) are thread-safe — call them
-freely from mic callback threads, asyncio tasks, or anywhere else.
+public methods (show/hide/update_level/update_caption) are thread-safe —
+call them freely from mic callback threads, asyncio tasks, or anywhere
+else.
 
 CAVEAT: PyQt6 officially expects QApplication to run on the main thread.
 Running it on a background thread (as done here) works reliably on
@@ -21,17 +22,21 @@ NOTE: deliberately no QGraphicsBlurEffect anywhere in this file — it
 expands a widget's drawing bounds past its actual pixel buffer, which
 Windows' layered-window compositor rejects on a transparent always-on-
 top window (shows up as "UpdateLayeredWindowIndirect failed... The
-parameter is incorrect" spam). All glow/fade here is done manually by
-varying alpha in paintEvent instead.
+parameter is incorrect" spam). All glow/fade/blur-look here is done
+manually via layered low-alpha shapes instead.
 """
 
 import sys
+import math
 import queue
 import threading
 
 from PyQt6.QtWidgets import QApplication, QWidget
-from PyQt6.QtGui import QPainter, QConicalGradient, QColor, QPen
-from PyQt6.QtCore import Qt, QTimer, QRectF
+from PyQt6.QtGui import (
+    QPainter, QRadialGradient, QConicalGradient, QColor, QPen, QBrush,
+    QFont, QFontMetrics, QPainterPath,
+)
+from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
 
 
 class _OrbWidget(QWidget):
@@ -40,66 +45,88 @@ class _OrbWidget(QWidget):
         self._size = size
         self._level = 0.0
         self._target_level = 0.0
-        self._angle = 0.0
-        self._angle2 = 0.0
 
-        self._opacity = 0.0        # current fade level, 0..1
+        self._phase = 0.0        # drives both idle drift and voice-reactive motion
+        self._rim_angle = 0.0
+
+        self._opacity = 0.0
         self._target_opacity = 0.0
-        self._pending_hide = False  # actually hide the OS window once fade-out completes
+        self._pending_hide = False
 
-        self._ripples: list[float] = []  # each entry is an age 0..1
-        self._ripple_cooldown = 0.0
+        self._caption_text = ""
+        self._caption_opacity = 0.0
+        self._caption_target_opacity = 0.0
+        self._caption_idle_frames = 0
+        self._caption_hold_frames = 240  # ~4s at 60fps before it starts fading
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool  # keeps it off the taskbar / alt-tab list
+            | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
-        # Extra canvas room around the core orb so ripples have space to
-        # expand into without getting clipped at the widget edge.
-        self._canvas = int(size * 2.2)
+        # extra room for the bigger, softer glow
+        self._orb_area = int(size * 2.8)
+        self._caption_area_h = 54
+        self._total_w = max(self._orb_area, 480)
+        self._total_h = self._orb_area + self._caption_area_h
+
         screen = QApplication.primaryScreen().geometry()
-        x = (screen.width() - self._canvas) // 2
+        x = (screen.width() - self._total_w) // 2
         y = top_margin
-        self.setGeometry(x, y, self._canvas, self._canvas)
+        self.setGeometry(x, y, self._total_w, self._total_h)
+
+        self._orb_cx = self._total_w / 2
+        self._orb_cy = self._orb_area / 2
 
         self.hide()
 
         self._timer = QTimer()
         self._timer.timeout.connect(self._tick)
-        self._timer.start(16)  # ~60fps
+        self._timer.start(16)
 
     # ─── Animation state ───
 
     def _tick(self):
         self._level += (self._target_level - self._level) * 0.25
 
-        self._angle = (self._angle + 2.0) % 360.0
-        self._angle2 = (self._angle2 - 3.2) % 360.0
+        # Always drifting, even at silence — this is what keeps it feeling
+        # alive/"moving" instead of a static image between utterances.
+        idle_speed = 0.01
+        voice_speed = 0.03 * self._level
+        self._phase += idle_speed + voice_speed
+        self._rim_angle = (self._rim_angle + 0.6) % 360.0
 
         self._opacity += (self._target_opacity - self._opacity) * 0.18
-        if self._pending_hide and self._opacity < 0.02:
+
+        if self._caption_text:
+            self._caption_idle_frames += 1
+            self._caption_target_opacity = 0.0 if self._caption_idle_frames > self._caption_hold_frames else 1.0
+        else:
+            self._caption_target_opacity = 0.0
+        self._caption_opacity += (self._caption_target_opacity -
+                                  self._caption_opacity) * 0.08
+
+        if self._pending_hide and self._opacity < 0.02 and self._caption_opacity < 0.02:
             self._opacity = 0.0
+            self._caption_opacity = 0.0
+            self._caption_text = ""
             super().hide()
             self._pending_hide = False
-
-        if self._level > 0.18:
-            self._ripple_cooldown -= 1
-            if self._ripple_cooldown <= 0:
-                self._ripples.append(0.0)
-                self._ripple_cooldown = 14
-
-        self._ripples = [min(1.0, age + 0.018) for age in self._ripples]
-        self._ripples = [age for age in self._ripples if age < 1.0]
 
         self.update()
 
     def set_target_level(self, level: float):
         self._target_level = max(0.0, min(1.0, level))
+
+    def set_caption(self, text: str):
+        self._caption_text = text.strip()
+        self._caption_idle_frames = 0
+        if self._caption_text:
+            self._caption_target_opacity = 1.0
 
     def animate_show(self):
         self._pending_hide = False
@@ -111,104 +138,201 @@ class _OrbWidget(QWidget):
         self._target_opacity = 0.0
         self._pending_hide = True
 
-    # ─── Drawing ───
+    # ─── Drawing helpers ───
 
-    def _ring_gradient(self, center: float, angle: float, alpha: int) -> QConicalGradient:
-        gradient = QConicalGradient(center, center, angle)
-        stops = [
-            (0.00, "#3a6df0"),
-            (0.15, "#7b2ff7"),
-            (0.35, "#e030ff"),
-            (0.50, "#ff8a65"),
-            (0.65, "#e030ff"),
-            (0.85, "#7b2ff7"),
-            (1.00, "#3a6df0"),
-        ]
-        for pos, hexcolor in stops:
-            c = QColor(hexcolor)
-            c.setAlpha(alpha)
-            gradient.setColorAt(pos, c)
-        return gradient
+    def _glow_color(self, alpha: int) -> QColor:
+        c = QColor("#6fa3ff")
+        c.setAlpha(alpha)
+        return c
+
+    def _wavy_ring_path(self, cx, cy, base_r, amp, freq1, freq2, phase, n=100) -> QPainterPath:
+        """A closed ring whose radius wobbles sinusoidally — this is the
+        fine interference/ripple texture, not a colored blob or streak."""
+        path = QPainterPath()
+        for i in range(n + 1):
+            theta = (i / n) * 2 * math.pi
+            r = base_r + amp * math.sin(freq1 * theta + phase) + \
+                amp * 0.35 * math.sin(freq2 * theta - phase * 1.4)
+            x = cx + r * math.cos(theta)
+            y = cy + r * math.sin(theta)
+            if i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+        path.closeSubpath()
+        return path
 
     def paintEvent(self, event):
-        if self._opacity <= 0.01:
+        if self._opacity <= 0.01 and self._caption_opacity <= 0.01:
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        canvas = self._canvas
-        center = canvas / 2
-        orb_size = self._size
-
-        min_radius = orb_size * 0.30
-        max_radius = orb_size * 0.40
-        radius = min_radius + (max_radius - min_radius) * self._level
-        rect = QRectF(center - radius, center - radius, radius * 2, radius * 2)
-
+        cx, cy = self._orb_cx, self._orb_cy
         op = self._opacity
 
-        painter.setPen(Qt.PenStyle.NoPen)
-        center_color = QColor(10, 8, 20)
-        center_color.setAlpha(int(200 * op))
-        painter.setBrush(center_color)
-        painter.drawEllipse(rect)
+        if op > 0.01:
+            min_r = self._size * 0.36
+            max_r = self._size * 0.54
+            radius = min_r + (max_r - min_r) * self._level
+            rect = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
 
-        base_width = orb_size * 0.05 + (orb_size * 0.02 * self._level)
+            # ── Big, soft, diffuse outer glow — several wide low-alpha
+            # rings, spread much further than a tight halo would go.
+            glow_layers = 7
+            for i in range(glow_layers, 0, -1):
+                extra = i * (self._size * (0.09 + 0.05 * self._level))
+                alpha = int(26 * (1 - (i - 1) / glow_layers)
+                            * (0.6 + 0.5 * self._level) * op)
+                pen = QPen()
+                pen.setBrush(self._glow_color(alpha))
+                pen.setWidthF(self._size * 0.12 + extra)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(rect)
 
-        glow_layers = 5
-        for i in range(glow_layers, 0, -1):
-            extra_width = i * (orb_size * 0.045)
-            alpha = int(70 * (1 - (i - 1) / glow_layers) * op)
+            # ── Sphere body ──
+            sphere_path = QPainterPath()
+            sphere_path.addEllipse(rect)
+            painter.save()
+            painter.setClipPath(sphere_path)
+
+            light_cx = cx - radius * 0.30
+            light_cy = cy - radius * 0.32
+            base_grad = QRadialGradient(
+                QPointF(light_cx, light_cy), radius * 1.55)
+            for pos, hexcolor in [
+                (0.00, "#dceeff"), (0.28, "#7fb0ff"),
+                (0.60, "#3d5fe0"), (1.00, "#12185c"),
+            ]:
+                c = QColor(hexcolor)
+                c.setAlpha(int(240 * op))
+                base_grad.setColorAt(pos, c)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(base_grad)
+            painter.drawEllipse(rect)
+
+            # ── Fine wavy ripple/interference lines — the texture that
+            # replaces the old colored streaks.
+            ripple_cx = cx - radius * 0.12
+            ripple_cy = cy - radius * 0.10
+            ring_count = 9
+            for i in range(ring_count):
+                t = i / (ring_count - 1)
+                base_r = radius * (0.18 + 0.80 * t)
+                amp = radius * (0.035 + 0.05 * self._level) * (1.0 - t * 0.3)
+                path = self._wavy_ring_path(
+                    ripple_cx, ripple_cy, base_r, amp,
+                    freq1=3 + (i % 3), freq2=5 + (i % 2),
+                    phase=self._phase * (1.0 + 0.15 * i) + i,
+                )
+                alpha = int((26 + 10 * self._level) * (1.0 - t * 0.4) * op)
+                pen = QPen()
+                pen.setColor(QColor(255, 255, 255, alpha))
+                pen.setWidthF(1.4)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(path)
+
+            # ── Subtle iridescent edge fringe (small sliver, not the
+            # whole rim) — the little rainbow glint glass spheres get.
+            fringe_grad = QConicalGradient(cx, cy, 200)
+            fringe_stops = [
+                (0.00, QColor(255, 255, 255, 0)),
+                (0.04, QColor(120, 170, 255, int(90 * op))),
+                (0.07, QColor(190, 140, 255, int(100 * op))),
+                (0.10, QColor(255, 160, 200, int(80 * op))),
+                (0.13, QColor(255, 255, 255, 0)),
+                (1.00, QColor(255, 255, 255, 0)),
+            ]
+            for pos, color in fringe_stops:
+                fringe_grad.setColorAt(pos, color)
             pen = QPen()
-            pen.setBrush(self._ring_gradient(center, self._angle, alpha))
-            pen.setWidthF(base_width + extra_width)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setBrush(fringe_grad)
+            pen.setWidthF(self._size * 0.05)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(rect)
 
-        for age in self._ripples:
-            ripple_radius = radius + age * (orb_size * 0.55)
-            ripple_alpha = int(150 * (1 - age) * op)
-            if ripple_alpha <= 1:
-                continue
-            ripple_rect = QRectF(
-                center - ripple_radius, center - ripple_radius,
-                ripple_radius * 2, ripple_radius * 2,
-            )
-            pen = QPen()
-            pen.setBrush(self._ring_gradient(
-                center, self._angle, ripple_alpha))
-            pen.setWidthF(max(1.5, base_width * (1 - age * 0.6)))
-            painter.setPen(pen)
+            # ── Highlight — bright small core + soft surrounding halo
+            hl_cx = cx - radius * 0.32
+            hl_cy = cy - radius * 0.38
+
+            halo_r = radius * 0.48
+            halo_grad = QRadialGradient(QPointF(hl_cx, hl_cy), halo_r)
+            halo_grad.setColorAt(0.0, QColor(255, 255, 255, int(90 * op)))
+            halo_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setBrush(halo_grad)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(
+                QRectF(hl_cx - halo_r, hl_cy - halo_r, halo_r * 2, halo_r * 2))
+
+            core_r = radius * 0.14
+            core_grad = QRadialGradient(QPointF(hl_cx, hl_cy), core_r)
+            core_grad.setColorAt(0.0, QColor(255, 255, 255, int(220 * op)))
+            core_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setBrush(core_grad)
+            painter.drawEllipse(
+                QRectF(hl_cx - core_r, hl_cy - core_r, core_r * 2, core_r * 2))
+
+            painter.restore()  # drop clip
+
+        # ── Caption: frosted-glass pill behind the text so it's readable
+        # against any desktop background, not floating text on nothing.
+        if self._caption_opacity > 0.01 and self._caption_text:
+            cap_op = self._caption_opacity
+            painter.setOpacity(cap_op)
+
+            font = QFont("Segoe UI Semibold", 12)
+            font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 104)
+            painter.setFont(font)
+            metrics = QFontMetrics(font)
+
+            max_text_w = self._total_w - 80
+            elided = metrics.elidedText(
+                self._caption_text, Qt.TextElideMode.ElideRight, max_text_w)
+            text_w = metrics.horizontalAdvance(elided)
+
+            pill_w = text_w + 44
+            pill_h = 34
+            pill_x = cx - pill_w / 2
+            pill_y = self._orb_area + (self._caption_area_h - pill_h) / 2
+            pill_rect = QRectF(pill_x, pill_y, pill_w, pill_h)
+
+            # Soft outer glow behind the pill (fake blur via layered
+            # low-alpha rounded rects, same trick used on the sphere).
+            for i in range(4, 0, -1):
+                grow = i * 3
+                alpha = int(18 * (1 - (i - 1) / 4) * cap_op)
+                glow_rect = pill_rect.adjusted(-grow, -grow, grow, grow)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(20, 25, 60, alpha))
+                painter.drawRoundedRect(
+                    glow_rect, pill_h / 2 + grow, pill_h / 2 + grow)
+
+            # Frosted glass pill body
+            glass = QColor(25, 28, 48, int(150 * cap_op))
+            painter.setBrush(glass)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(pill_rect, pill_h / 2, pill_h / 2)
+
+            # Thin light border for the "glass edge" look
+            border_pen = QPen(QColor(255, 255, 255, int(50 * cap_op)))
+            border_pen.setWidthF(1.0)
+            painter.setPen(border_pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(ripple_rect)
+            painter.drawRoundedRect(pill_rect, pill_h / 2, pill_h / 2)
 
-        secondary_radius = radius * 0.72
-        secondary_rect = QRectF(
-            center - secondary_radius, center - secondary_radius,
-            secondary_radius * 2, secondary_radius * 2,
-        )
-        pen = QPen()
-        pen.setBrush(self._ring_gradient(center, self._angle2, int(140 * op)))
-        pen.setWidthF(base_width * 0.4)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(secondary_rect)
+            # Text
+            painter.setPen(QColor(255, 255, 255, int(235 * cap_op)))
+            painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, elided)
 
-        pen = QPen()
-        pen.setBrush(self._ring_gradient(center, self._angle, int(255 * op)))
-        pen.setWidthF(base_width)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(rect)
+            painter.setOpacity(1.0)
 
 
 class OrbOverlay:
-    def __init__(self, size: int = 64, top_margin: int = 16):
+    def __init__(self, size: int = 80, top_margin: int = 16):
         self._size = size
         self._top_margin = top_margin
         self._queue: "queue.Queue[tuple[str, object]]" = queue.Queue()
@@ -239,6 +363,8 @@ class OrbOverlay:
                     self.widget.animate_hide()
                 elif action == "level":
                     self.widget.set_target_level(payload)
+                elif action == "caption":
+                    self.widget.set_caption(payload)
         except queue.Empty:
             pass
 
@@ -252,6 +378,13 @@ class OrbOverlay:
 
     def update_level(self, rms: float):
         self._queue.put(("level", rms))
+
+    def update_caption(self, text: str):
+        """Show a line of transcribed text below the orb on a frosted-glass
+        pill. Call with each interim/partial transcript as it comes in,
+        and again with the final one. Fades out on its own a few seconds
+        after the last update — or pass "" to clear it immediately."""
+        self._queue.put(("caption", text))
 
 
 _orb: OrbOverlay | None = None

@@ -1,7 +1,8 @@
 """
-Jarvis - Grid Overlay UI Finder
+TARZ - Grid Overlay UI Finder
 Draws a labeled grid over the screenshot, asks Gemini which cell contains
 the target, then converts cell → exact pixel coordinates.
+NOT USING ANYMORE AS A MAIN ITS NOW A FALL BACK
 """
 
 from google.genai import types

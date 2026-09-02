@@ -43,7 +43,7 @@ from Tools.rag import reranked_retrieve
 from Tools.media_control import media_play_pause, media_next_track, media_previous_track
 from pydantic import BaseModel, Field
 from Audio.stt import live_listen
-from Audio.wake_word import wait_for_wake_word, wait_for_followup, play_done_chime
+from Audio.wake_word import wait_for_wake_word, play_done_chime
 from Audio.tts import speak
 from Audio.orb_overlay import get_orb
 print("[Init] 3 - rag...")
@@ -488,7 +488,7 @@ def main():
         speak(response)
         play_done_chime()
 
-        while wait_for_followup(timeout=5.0):
+        while True:
 
             try:
                 user_input = listen()

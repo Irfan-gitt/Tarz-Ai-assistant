@@ -4,8 +4,7 @@ from dotenv import load_dotenv
 import json
 from langchain_groq import ChatGroq
 import chromadb
-import os
-import re
+
 from datetime import datetime
 
 client = chromadb.PersistentClient(path="./tarz_memory")

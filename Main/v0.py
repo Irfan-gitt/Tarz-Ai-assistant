@@ -11,11 +11,11 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_cerebras import ChatCerebras
-from Prompts.prompt import SYSTEM_PROMPT, SYSTEM
+from Prompts.prompt import SYSTEM
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from Tools.gmail import send_email, read_emails, search_emails
-from Tools.calendar import create_event, list_events, delete_event
+from Tools.calendar_tool import create_event, list_events, delete_event
 from Tools.real_time_data import rt_data
 from Audio.stt import listen as stt_listen
 from Audio.tts import speak
@@ -187,7 +187,7 @@ def think(user_input):
     global _pending_messages  # iknow its bad practise iam just lazyyyy🙂
 
     similar_tasks = retrieve_similar_task(user_input, n=3)
-    similar_chats = retrieve_similar_chats(user_input, n=5) 
+    similar_chats = retrieve_similar_chats(user_input, n=5)
     recent_tasks = get_recent_tasks(5)
     prefs = get_all_preferences()
     smart_memory_context = build_memory_context(user_input)

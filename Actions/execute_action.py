@@ -133,6 +133,17 @@ def open_app(app_name: str) -> str:
 
 
 @tool
+def open_app2(app_name: str) -> str:
+    """Open any application by name."""
+    name = app_name if app_name.lower().endswith(".exe") else f"{app_name}.exe"
+    try:
+        os.startfile(name)
+        return f"Opened {app_name}"
+    except OSError:
+        return f"Couldn't find {app_name}"
+
+
+@tool
 def read_screen(question: str) -> str:
     """Read and describe briefly what is currently visible on screen."""
     return describe_screen(question)

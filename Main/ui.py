@@ -7,7 +7,7 @@ import os
 import threading
 import webview
 from tarz import think
-from Audio.stt import listen as stt_listen
+from Audio.stt import live_listen as stt_listen
 from Audio.tts import speak
 
 

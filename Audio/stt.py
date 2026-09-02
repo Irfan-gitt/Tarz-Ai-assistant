@@ -1,4 +1,3 @@
-# Audio/stt_live.py
 import numpy as np
 from Audio.orb_overlay import get_orb
 import os
@@ -8,7 +7,7 @@ from google import genai
 from google.genai import types
 from cartesia import AsyncCartesia
 from dotenv import load_dotenv
-from Audio.wake_word import get_best_input_device, _play_wake_beep
+from Audio.wake_word import get_best_input_device, play_wake_beep
 load_dotenv()
 
 GEMINI_KEYS = [
@@ -24,12 +23,11 @@ if not GEMINI_KEYS:
 
 current_key_idx = 0
 
-# Verify against ai.google.dev/gemini-api/docs/live before relying on it —
-# not confirmed current, see note above.
+
 MODEL = "gemini-3.5-transcribe-live"
 
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY")
-CARTESIA_MODEL = "ink-2"  # native turn detection, mirrors Gemini's final/interim split
+CARTESIA_MODEL = "ink-2"
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -41,7 +39,7 @@ def _get_client():
     return genai.Client(api_key=GEMINI_KEYS[current_key_idx])
 
 
-async def _stream_one_utterance() -> str:
+async def _stream_one_utterance(timeout: float | None = None) -> str:
     """
     Connects, streams mic audio, returns the first FINAL transcript
     (one complete user utterance = one turn). Rotates across GEMINI_KEYS
@@ -71,9 +69,11 @@ async def _stream_one_utterance() -> str:
                         interim = server_content.interim_input_transcription
                         if interim:
                             print(f"\r🎤 {interim.text}", end="", flush=True)
+                            get_orb().update_caption(interim.text)
                         final = server_content.input_transcription
                         if final:
                             print(f"\n✅ FINAL: {final.text}")
+                            get_orb().update_caption(final.text)
                             result["text"] = final.text
                             return
 
@@ -93,7 +93,7 @@ async def _stream_one_utterance() -> str:
                         get_orb().update_level(min(rms * 4, 1.0))
 
                     device, hostapi_name = get_best_input_device()
-                    _play_wake_beep()
+                    play_wake_beep()
                     print("🎤 Speak now...")
 
                     stream_kwargs = dict(
@@ -115,10 +115,19 @@ async def _stream_one_utterance() -> str:
                                 audio=types.Blob(
                                     data=audio_chunk, mime_type="audio/pcm;rate=16000")
                             )
+
                 recv_task = asyncio.create_task(receive())
                 send_task = asyncio.create_task(send_mic())
 
-                await recv_task
+                try:
+                    if timeout is not None:
+                        await asyncio.wait_for(recv_task, timeout=timeout)
+                    else:
+                        await recv_task
+                except asyncio.TimeoutError:
+                    print("🔇 No follow-up — back to requiring 'Tarz'.")
+                    recv_task.cancel()
+
                 send_task.cancel()
                 try:
                     await send_task
@@ -140,15 +149,7 @@ async def _stream_one_utterance() -> str:
     raise RuntimeError(f"All Gemini keys failed for live STT: {last_error}")
 
 
-async def _stream_one_utterance_cartesia() -> str:
-    """
-    Cartesia Ink-2 fallback — same contract as the Gemini version above.
-    Ink-2 has native turn detection (turn.start/eager_end/end), so no manual
-    VAD or "finalize" call needed, same as Gemini's built-in turn handling.
-    NOTE: verify the exact turn/transcript field names against
-    docs.cartesia.ai/api-reference/stt — Ink-2's realtime API shipped in SDK
-    3.2.0 and public examples are still sparse; not confirmed current.
-    """
+async def _stream_one_utterance_cartesia(timeout: float | None = None) -> str:
     client = AsyncCartesia(api_key=CARTESIA_API_KEY)
     result = {"text": None}
 
@@ -162,11 +163,17 @@ async def _stream_one_utterance_cartesia() -> str:
 
             async def receive():
                 async for response in ws.receive():
-                    if response.type == "transcript" and getattr(response, "is_final", False):
-                        result["text"] = response.text
-                        return
+                    if response.type == "transcript":
+                        if not getattr(response, "is_final", False):
+                            get_orb().update_caption(response.text)
+                        else:
+                            get_orb().update_caption(response.text)
+                            result["text"] = response.text
+                            return
                     if response.type == "turn.end":
-                        result["text"] = getattr(response, "text", "") or ""
+                        text = getattr(response, "text", "") or ""
+                        get_orb().update_caption(text)
+                        result["text"] = text
                         return
 
             async def send_mic():
@@ -176,8 +183,7 @@ async def _stream_one_utterance_cartesia() -> str:
                 def callback(indata, frames, time, status):
                     if status:
                         print("Audio:", status)
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait, bytes(indata))
+                    loop.call_soon_threadsafe(queue.put_nowait, bytes(indata))
 
                     samples = np.frombuffer(indata, dtype=np.int16).astype(
                         np.float32) / 32768.0
@@ -185,6 +191,7 @@ async def _stream_one_utterance_cartesia() -> str:
                     get_orb().update_level(min(rms * 4, 1.0))
 
                 device, hostapi_name = get_best_input_device()
+                play_wake_beep()
                 print("🎤 Speak now... (Cartesia fallback)")
 
                 stream_kwargs = dict(
@@ -207,7 +214,15 @@ async def _stream_one_utterance_cartesia() -> str:
             recv_task = asyncio.create_task(receive())
             send_task = asyncio.create_task(send_mic())
 
-            await recv_task
+            try:
+                if timeout is not None:
+                    await asyncio.wait_for(recv_task, timeout=timeout)
+                else:
+                    await recv_task
+            except asyncio.TimeoutError:
+                print("🔇 No follow-up — back to requiring 'Tarz'.")
+                recv_task.cancel()
+
             send_task.cancel()
             try:
                 await send_task
@@ -219,12 +234,12 @@ async def _stream_one_utterance_cartesia() -> str:
         await client.close()
 
 
-def live_listen() -> str:
+def live_listen(timeout: float | None = None) -> str:
     """Drop-in sync replacement for input('You:') — blocks until one spoken
-    utterance is transcribed. Tries Gemini first (rotating keys), falls back
-    to Cartesia Ink-2 if every Gemini key fails."""
+    utterance is transcribed (or timeout elapses, returning ''). Tries Gemini
+    first (rotating keys), falls back to Cartesia Ink-2 if every Gemini key fails."""
     try:
-        return asyncio.run(_stream_one_utterance())
+        return asyncio.run(_stream_one_utterance(timeout=timeout))
     except RuntimeError as e:
         print(f"[STT] Gemini exhausted ({e}), falling back to Cartesia")
-        return asyncio.run(_stream_one_utterance_cartesia())
+        return asyncio.run(_stream_one_utterance_cartesia(timeout=timeout))

@@ -28,7 +28,7 @@ def take_screenshot():
     pyautogui.screenshot().save("temp/screen.png")
 
 
-def easyocr_find(target):
+def easyocr_find(target):  # not using anymore
     try:
         results = reader.readtext("temp/screen.png")
         best = None
@@ -52,8 +52,7 @@ def easyocr_find(target):
 
 
 def find_on_screen(target):
-    # grid_click captures the screenshot itself.  Taking one here only adds
-    # latency and used to make every returned dictionary look like success.
+
     result = grid_click(target)
     if result.get("found"):
         return result

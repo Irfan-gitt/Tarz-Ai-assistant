@@ -23,8 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 from dotenv import load_dotenv
 from langsmith import traceable
 from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_cerebras import ChatCerebras
 from Prompts.prompt import SYSTEM, SUPERVISOR_PROMPT
 from Vison.vision import vision_verify_system
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
@@ -43,7 +41,9 @@ from Tools.rag import reranked_retrieve
 from Tools.media_control import media_play_pause, media_next_track, media_previous_track
 from pydantic import BaseModel, Field
 from Audio.stt import live_listen
-from Audio.wake_word import wait_for_wake_word, play_done_chime
+from Audio.wake_word import wait_for_wake_word, play_done_chime, wake_hotkey_event
+from Tools.cancel_state import cancel_event, TaskCancelled, check_cancel
+from langchain_openrouter import ChatOpenRouter
 from Audio.tts import speak
 from Audio.orb_overlay import get_orb
 print("[Init] 3 - rag...")
@@ -56,8 +56,6 @@ api_key = os.getenv("GROQ_API_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
 
-# Kept as the single source of truth for "everything TARZ can call" —
-# CATEGORY_TOOLS below slices this into groups, nothing here is unused.
 ALL_TOOLS = [
     click, type_text, press_key, open_app, use_shortcut, read_screen, clipboard, wait,
     volume_control, set_alarm, set_timer,
@@ -85,10 +83,7 @@ CATEGORY_TOOLS = {
 
     "media": [media_play_pause, media_previous_track, media_next_track],
 
-    # Every dedicated app tool bundled WITH generic GUI tools, so a
-    # dedicated tool's manual fallback (open_app/click/type_text) is
-    # always available in the same call — this is what fixed the
-    # WhatsApp "open_app not in request.tools" crash from earlier.
+
     "app_control": [
         click, type_text, press_key, open_app, use_shortcut, read_screen,
         spotify_play_song, spotify_play_playlist,
@@ -100,16 +95,10 @@ CATEGORY_TOOLS = {
 
     "chat": [],
 }
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 
 print("[Init] Setting up LLMs...")
-
-llm_plain = ChatGroq(
-    api_key=api_key,
-    temperature=0.7,
-    model="openai/gpt-oss-120b"
-)
-llm_classify = ChatGroq(api_key=api_key, temperature=0,
-                        model="openai/gpt-oss-120b")
 
 
 def listen():
@@ -118,13 +107,19 @@ def listen():
 
 
 TOOL_LLMS = [
-    ChatCerebras(model="gpt-oss-120b",
-                 api_key=os.getenv("CEREBRAS_API_KEY2"), temperature=0.2),
-    ChatGroq(model="openai/gpt-oss-120b", api_key=os.getenv("GROQ_API_KEY")),
-    ChatGoogleGenerativeAI(model="gemini-2.5-flash",
-                           google_api_key=os.getenv("GEMINI_KEY_5"), temperature=0.2),
-    ChatCerebras(model="gpt-oss-120b",
-                 api_key=os.getenv("CEREBRAS_API_KEY2"), temperature=0.2),
+    ChatGroq(api_key=api_key, temperature=0.7, model="openai/gpt-oss-120b"),
+    ChatOpenRouter(model="openrouter/free", temperature=0.2),
+]
+
+CLASSIFY_LLMS = [
+    ChatGroq(api_key=api_key, temperature=0.7, model="openai/gpt-oss-120b"),
+    ChatOpenRouter(model="openrouter/free", temperature=0),
+]
+
+CHAT_LLMS = [
+
+    ChatGroq(api_key=api_key, temperature=0.7, model="openai/gpt-oss-120b"),
+    ChatOpenRouter(model="openrouter/free", temperature=0.7),
 ]
 
 
@@ -157,18 +152,6 @@ class TaskCategory(BaseModel):
     ] = Field(description="Best matching category for this request ,If you are confused just chose 'chat' as default", default="chat")
 
 
-cancel_event = threading.Event()
-
-
-class TaskCancelled(Exception):
-    pass
-
-
-def _check_cancel():
-    if cancel_event.is_set():
-        raise TaskCancelled()
-
-
 def _on_cancel_hotkey():
     if not cancel_event.is_set():
         print("\n🛑 Cancel requested (Ctrl+Space)")
@@ -176,6 +159,15 @@ def _on_cancel_hotkey():
 
 
 keyboard.add_hotkey("ctrl+space", _on_cancel_hotkey)
+
+
+def _on_wake_hotkey():
+    if not wake_hotkey_event.is_set():
+        print("\n⌨️  Wake hotkey pressed")
+        wake_hotkey_event.set()
+
+
+keyboard.add_hotkey("ctrl+shift+space", _on_wake_hotkey)
 
 
 def verify_completion(expected_outcome: str) -> dict:
@@ -223,7 +215,7 @@ def needs_vision_verification(user_request: str) -> bool:
 
 
 def supervisor(state: TarzState) -> dict:
-    _check_cancel()
+    check_cancel()
     steps = state.get("steps", 0)
     if steps >= MAX_STEPS:
         return {"next": "finished", "steps": steps + 1}
@@ -261,10 +253,12 @@ def supervisor(state: TarzState) -> dict:
 
     recent_text = "\n".join(m.content for m in sanitize_for_plain_llm(recent))
 
-    try:
-        decision = llm_classify.with_structured_output(SupervisorDecision).invoke([
-            SystemMessage(content=SUPERVISOR_PROMPT),
-            HumanMessage(content=f"""
+    next_step, instruction = "finished", ""
+    for llm in CLASSIFY_LLMS:
+        try:
+            decision = llm.with_structured_output(SupervisorDecision).invoke([
+                SystemMessage(content=SUPERVISOR_PROMPT),
+                HumanMessage(content=f"""
 USER GOAL:
 {user_request}
 
@@ -282,15 +276,16 @@ CURRENT STEP:
 
 Decide what TARZ should do next.
 """)
-        ])
-        next_step = decision.next
-        instruction = decision.instruction
-        print("\n🧠 SUPERVISOR:")
-        print("Reason:", decision.reasoning)
-        print("Instruction:", instruction)
-        print("Next:", next_step)
-    except Exception as e:
-        print(f"[supervisor] decision failed, defaulting to finished: {e}")
+            ])
+            next_step = decision.next
+            instruction = decision.instruction
+            print("\n🧠 SUPERVISOR:")
+            print("Reason:", decision.reasoning)
+            print("Instruction:", instruction)
+            print("Next:", next_step)
+            break
+        except Exception as e:
+            print(f"[supervisor] {type(llm).__name__} failed: {e}")
         next_step = "finished"
         instruction = ""
 
@@ -307,30 +302,29 @@ def route_from_supervisor(state: dict) -> str:
 
 
 def classify(state: TarzState) -> dict:
-    _check_cancel()
-    try:
-        classifier = llm_classify.with_structured_output(TaskCategory)
-        result = classifier.invoke(
-            [SystemMessage(content=(
-                "Classify this request into exactly one category:\n"
-                "realtime_info = weather, news, current facts, translation\n"
-                "productivity = email, calendar, alarms, timers\n"
-                "system = volume, clipboard, waiting\n"
-                "media = play/pause/skip on whatever's currently loaded, generic media keys\n"
-                "app_control = opening/controlling any specific app (Spotify, WhatsApp, "
-                "Discord, Telegram, browser), clicking, typing, reading the screen\n"
-                "chat = normal conversation, no action needed"
-                "IMPORTANT:\n"
-                "You do not have access to execute any tool yourself. Your ONLY job is picking one category name. Never attempt to call media_play_pause, spotify_play_song,or any other tool directly — even if you see one mentioned in the conversation."
-
-
-            ))]
-            + sanitize_for_plain_llm(state["messages"][-6:])
-        )
-        return {"category": result.category}
-    except Exception as e:
-        print(f"[classify] failed, defaulting to chat: {e}")
-        return {"category": "chat"}
+    check_cancel()
+    history = [m for m in sanitize_for_plain_llm(state["messages"][-6:])
+               if not isinstance(m, SystemMessage)]
+    for llm in CLASSIFY_LLMS:
+        try:
+            result = llm.with_structured_output(TaskCategory).invoke(
+                [SystemMessage(content=(
+                    "Classify this request into exactly one category:\n"
+                    "realtime_info = weather, news, current facts, translation\n"
+                    "productivity = email, calendar, alarms, timers\n"
+                    "system = volume, clipboard, waiting\n"
+                    "media = play/pause/skip on whatever's currently loaded, generic media keys\n"
+                    "app_control = opening/controlling any specific app (Spotify, WhatsApp, "
+                    "Discord, Telegram, browser), clicking, typing, reading the screen\n"
+                    "chat = normal conversation, no action needed"
+                    "IMPORTANT:\n"
+                    "You do not have access to execute any tool yourself. Your ONLY job is picking one category name. Never attempt to call media_play_pause, spotify_play_song,or any other tool directly — even if you see one mentioned in the conversation."
+                ))] + history
+            )
+            return {"category": result.category}
+        except Exception as e:
+            print(f"[classify] {type(llm).__name__} failed: {e}")
+    return {"category": "chat"}
 
 
 def route_from_classify(state: TarzState) -> str:
@@ -354,7 +348,7 @@ def make_worker(tools):
 
     def worker(state: TarzState) -> dict:
         global current_llm_idx
-        _check_cancel()
+        check_cancel()
         wsteps = state.get("worker_steps", 0)
         failures = []
 
@@ -399,7 +393,12 @@ Important:
 
 
 def chat(state: TarzState) -> dict:
-    return {"messages": [llm_plain.invoke(sanitize_for_plain_llm(state["messages"]))]}
+    for llm in CHAT_LLMS:
+        try:
+            return {"messages": [llm.invoke(sanitize_for_plain_llm(state["messages"]))]}
+        except Exception as e:
+            print(f"[chat] {type(llm).__name__} failed: {e}")
+    return {"messages": [AIMessage(content="Something broke on my end — mind trying that again?")]}
 
 
 graph = StateGraph(TarzState)
@@ -486,12 +485,16 @@ Relevant memories:
     except Exception as e:
         print(
             f"[think] graph execution failed, falling back to plain chat: {e}")
-        try:
-            fallback = llm_plain.invoke(
-                [SystemMessage(content=SYSTEM), HumanMessage(content=user_input)])
-            response = extract_text(fallback.content)
-        except Exception as e2:
-            print(f"[think] plain chat fallback also failed: {e2}")
+        response = None
+        for llm in CHAT_LLMS:
+            try:
+                fallback = llm.invoke(
+                    [SystemMessage(content=SYSTEM), HumanMessage(content=user_input)])
+                response = extract_text(fallback.content)
+                break
+            except Exception as e2:
+                print(f"[think] {type(llm).__name__} fallback failed: {e2}")
+        if response is None:
             response = "Something broke on my end — mind trying that again?"
 
     threading.Thread(target=save_imp_context, args=(
@@ -514,10 +517,9 @@ def main():
         speak(response)
         play_done_chime()
 
-        while time.sleep(10):
-
+        while True:
             try:
-                user_input = listen()
+                user_input = live_listen(timeout=10.0)
             except EOFError:
                 get_orb().hide()
                 return
