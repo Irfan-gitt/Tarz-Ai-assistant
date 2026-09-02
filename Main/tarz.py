@@ -1,5 +1,6 @@
 
 
+import keyboard
 import winreg
 import threading
 from datetime import datetime
@@ -42,7 +43,7 @@ from Tools.rag import reranked_retrieve
 from Tools.media_control import media_play_pause, media_next_track, media_previous_track
 from pydantic import BaseModel, Field
 from Audio.stt import live_listen
-from Audio.wake_word import wait_for_wake_word, wait_for_followup, play_done_chime
+from Audio.wake_word import wait_for_wake_word, play_done_chime
 from Audio.tts import speak
 from Audio.orb_overlay import get_orb
 print("[Init] 3 - rag...")
@@ -156,6 +157,27 @@ class TaskCategory(BaseModel):
     ] = Field(description="Best matching category for this request ,If you are confused just chose 'chat' as default", default="chat")
 
 
+cancel_event = threading.Event()
+
+
+class TaskCancelled(Exception):
+    pass
+
+
+def _check_cancel():
+    if cancel_event.is_set():
+        raise TaskCancelled()
+
+
+def _on_cancel_hotkey():
+    if not cancel_event.is_set():
+        print("\n🛑 Cancel requested (Ctrl+Space)")
+        cancel_event.set()
+
+
+keyboard.add_hotkey("ctrl+space", _on_cancel_hotkey)
+
+
 def verify_completion(expected_outcome: str) -> dict:
     answer = vision_verify_system(
         f"Is this currently true on screen: {expected_outcome}? "
@@ -174,14 +196,12 @@ def sanitize_for_plain_llm(messages) -> list:
             out.append(m)
         elif isinstance(m, AIMessage):
             if getattr(m, "tool_calls", None):
-                calls = ", ".join(
-                    f"{tc['name']}({tc.get('args', {})})" for tc in m.tool_calls)
-                out.append(AIMessage(content=f"[called tool(s): {calls}]"))
+                out.append(
+                    AIMessage(content=f"[performed {len(m.tool_calls)} action(s)]"))
             elif m.content:
                 out.append(AIMessage(content=extract_text(m.content)))
         elif isinstance(m, ToolMessage):
-            name = getattr(m, "name", None) or "tool"
-            out.append(AIMessage(content=f"[{name} result: {m.content}]"))
+            out.append(AIMessage(content="[action result available]"))
     return out
 
 
@@ -203,6 +223,7 @@ def needs_vision_verification(user_request: str) -> bool:
 
 
 def supervisor(state: TarzState) -> dict:
+    _check_cancel()
     steps = state.get("steps", 0)
     if steps >= MAX_STEPS:
         return {"next": "finished", "steps": steps + 1}
@@ -286,6 +307,7 @@ def route_from_supervisor(state: dict) -> str:
 
 
 def classify(state: TarzState) -> dict:
+    _check_cancel()
     try:
         classifier = llm_classify.with_structured_output(TaskCategory)
         result = classifier.invoke(
@@ -332,6 +354,7 @@ def make_worker(tools):
 
     def worker(state: TarzState) -> dict:
         global current_llm_idx
+        _check_cancel()
         wsteps = state.get("worker_steps", 0)
         failures = []
 
@@ -455,6 +478,11 @@ Relevant memories:
 
         response = extract_text(result["messages"][-1].content)
 
+    except TaskCancelled:
+        cancel_event.clear()
+        get_orb().hide()
+        response = "Okay, stopped."
+
     except Exception as e:
         print(
             f"[think] graph execution failed, falling back to plain chat: {e}")
@@ -486,7 +514,7 @@ def main():
         speak(response)
         play_done_chime()
 
-        while wait_for_followup(timeout=5.0):
+        while time.sleep(10):
 
             try:
                 user_input = listen()

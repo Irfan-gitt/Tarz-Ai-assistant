@@ -44,3 +44,4 @@ pywebview>=6.2.1
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+"cartesia[websockets]"
