@@ -4,85 +4,124 @@ A Jarvis-style AI assistant for Windows that can see your screen, control your c
 
 ---
 
+## V2: Agent Workflow for Desktop Tasks
+
+TARZ V2 turns one request into a controlled desktop workflow. A LangGraph supervisor classifies the request, gives only the relevant tools to a worker, checks the outcome with screen vision, and can retry when a visual action isn't complete. The tray application launches the current V2 agent.
+
+### V2 highlights
+
+- **Category-based routing:** requests are routed to realtime information, productivity, system, media, app control, or chat workers instead of exposing every tool on every request.
+- **Supervised multi-step execution:** workers can perform a sequence of actions and report back to the supervisor. Step limits (6 worker steps, 12 total steps) help prevent runaway loops.
+- **Visual completion checks:** UI-changing tasks are verified through screen vision before success is reported (a click alone doesn't prove anything — the supervisor checks whether the screen actually shows the result). Information-only and non-visual tasks skip this extra latency.
+- **Multi-provider fallback everywhere:** every LLM call — tool-calling, classification, casual chat, and screen vision — has an automatic fallback provider that kicks in on rate limits or outages, not just a single point of failure.
+- **Live, streaming voice pipeline:** both speech-to-text and text-to-speech stream over a persistent connection instead of record-then-transcribe, so there's no clipped first word and lower latency.
+- **Hands-free follow-ups:** after TARZ finishes speaking, it listens for a follow-up for a short window without needing the wake word again — no separate "detect speech, then transcribe" handoff, so nothing gets cut off.
+- **Cancel anytime:** a global hotkey interrupts an in-progress task at the next safe checkpoint, even mid-multi-step-execution.
+- **Memory-aware requests:** relevant local ChromaDB memories are retrieved with Two-stage retrieval: Vector Retrieval + Cross-Encoder Reranking before the agent res  
+- **Floating voice orb:** a lightweight always-on-top overlay shows mic level and live captions of what's being heard, instead of a console window.
+- **Optional tracing:** LangSmith can record requests, agent flow, and tool runs when enabled in `.env`.
+
+> **Prototype status:** V2 is actively developed software, not a finished commercial assistant. It is powerful, but desktop automation and model decisions can still be wrong. Review sensitive actions, especially messages, email, calls, and browser activity.
+
+### Dedicated app tools
+
+Dedicated tools give TARZ repeatable, app-specific workflows instead of relying only on generic clicking. Several are vision-backed, so TARZ confirms the actual on-screen result rather than assuming a click worked.
+
+| App | Supported workflows |
+|---|---|
+| Spotify | Search and play a song or playlist; media controls handle play/pause and track navigation. |
+| WhatsApp | Find a contact, send a message, start a call, and end a call. |
+| Discord | Send a message, toggle mute/deafen, answer a call, or decline a call. |
+| Telegram | Find a user and send a message. |
+| Browser | Open a URL or search query in Brave by default. |
+
+Dedicated tools are more convenient for repeatable tasks, but they are still GUI automation: an app update, changed window layout, missing login, display scaling, or an unexpected popup can cause a failure or a wrong click.
+
+---
+
 ## Why I Built This
 
 This started purely out of curiosity. I watched a 10-minute LangChain tutorial on YouTube and thought — *could I actually build something like Jarvis? An AI that sees my screen and controls my PC?*
 
-That's it. No roadmap, no grand plan, no prior professional dev background. Just curiosity that snowballed into months of building, breaking, and rebuilding.
+That's it. No roadmap, no grand plan, no prior professional dev background. Just curiosity that snowballed into months of building, breaking, and rebuilding — and V2 has been a full architectural rewrite on top of that.
 
-I designed the architecture myself — how the tool-calling and conversation brains should split and route, when to bring in vision vs. OCR, how memory should fit into the flow, what TARZ should and shouldn't be able to do. The actual coding I did with AI as my pair-programmer: writing implementations, debugging errors together, and iterating fast on each piece until it matched what I had in mind. I'd decide the what and the why, AI helped me get to the how faster — then I'd test it, find what didn't fit, and tweak it myself until it worked the way I wanted.Ui was made using ai tools compleatly 
+I designed the architecture myself — how the tool-calling and conversation brains should split and route, when to bring in vision, how memory should fit into the flow, what TARZ should and shouldn't be able to do. The actual coding I did with AI as my pair-programmer: writing implementations, debugging errors together, and iterating fast on each piece until it matched what I had in mind. I'd decide the what and the why, AI helped me get to the how faster — then I'd test it, find what didn't fit, and tweak it myself until it worked the way I wanted. UI elements were built with AI tools too.
 
-Along the way I picked up real concepts — RAG (retrieval-augmented generation), tool-calling, vector embeddings, agent loops — by building with them directly with the help of ai cause iam new to the concepts ,instead of reading about them first. If you're someone who wants to build something like this yourself: you don't need to know every concept upfront. Design the system you want, use AI to move faster on implementation, and tighten the gaps yourself as you learn. I'm currently going deeper into RAG so I can redesign TARZ's memory to be properly context-aware in the next version — this project is as much a learning exercise as it is a tool I use daily.
+Along the way I picked up real concepts — RAG (retrieval-augmented generation), tool-calling, vector embeddings, agent loops, multi-agent supervision — by building with them directly with the help of AI, since I'm new to a lot of these concepts, instead of reading about them first. If you're someone who wants to build something like this yourself: you don't need to know every concept upfront. Design the system you want, use AI to move faster on implementation, and tighten the gaps yourself as you learn.
+
+I used AI as a Tool not depened on it 
+---
+
+
+## Tech Stack
+
+Every stage below has a primary provider and an automatic fallback — if the primary hits a rate limit, quota error, or outage, TARZ rotates to the next one without you noticing.
+
+| Purpose | Primary | Fallback |
+|---|---|---|
+| Tool-calling (agent brain) | Groq — `openai/gpt-oss-120b` | OpenRouter — `openrouter/free` |
+| Task classification / routing | Groq — `openai/gpt-oss-120b` (temperature 0) | OpenRouter — `openrouter/free` |
+| Casual conversation | Groq — `openai/gpt-oss-120b` (temperature 0.7) | OpenRouter — `openrouter/free` |
+| Screen vision (describe screen, verify task completion) | Groq — `qwen/qwen3.8-27b` | OpenRouter — `openrouter/free` (image-capable) |
+| GUI click targeting | Moondream `.point()` API | — |
+| Speech-to-text (live utterance) | Gemini Live streaming transcription (rotates across up to 4 keys) | Cartesia — `ink-2` (native turn detection, streaming) |
+| Wake word detection ("Tarz") | Silero VAD + local `faster-whisper` (`small`, CPU) | — |
+| Text-to-speech | Groq — Orpheus (`canopylabs/orpheus-v1-english`) | Cartesia — `sonic-3` (streaming) |
+| Memory / RAG | ChromaDB + Two-stage retrieval: Vector Retrieval + Cross-Encoder Reranking
+| Orchestration | LangGraph `StateGraph`, `MemorySaver` checkpointer | — |
+| Voice overlay | PyQt6 floating orb (mic level + live captions) | — |
+| App launching | `os.startfile` (Windows App Paths / PATH resolution) | — |
+| Computer control | PyAutoGUI | — |
+| System tray | pystray | — |
+
+`openrouter/free` is OpenRouter's free model router — it automatically picks a free model that supports the request's needs (tool calling, structured output, or image understanding), so it covers multiple fallback roles without needing separate provider accounts.
 
 ---
 
-## THIS IMAGE SHOWS THE BACKGROUND PROCESS IN TERMINAL
-<img width="1284" height="722" alt="Screenshot 2026-08-05 222739" src="https://github.com/user-attachments/assets/263a9c2b-2374-4113-97a3-054c8712e879" /> 
+## Global Hotkeys
 
+| Hotkey | Action |
+|---|---|
+| `Ctrl+Space` | Cancel the current in-progress task and return to listening. |
+| `Ctrl+Shift+Space` | Skip saying the wake word — starts listening immediately. |
 
-
-
-## ⚠️ DEMO: SORRY FOR THE LOQ QUALITY MAX GIT FILE SIZE IS 10 MB AND VIDEO ALSO FAST FORWARD TO 3X 🙂
-
-
-
-
-
-
-## ⚠️ This Is a Prototype (v1)
-
-
-https://github.com/user-attachments/assets/9e018ae5-f97f-4a2c-b430-35d2d75c0ebb
-
-
-
-
-TARZ works, and I use it daily, but it is an early, rough version built by one curious person with AI as a coding partner — not a polished commercial product. Specifically:
-
-- **TTS and STT are not fine-tuned.** Piper (voice output) and Whisper (voice input) are used with their default open-source models. They work, but don't expect commercial-assistant-level voice quality or recognition accuracy.
-- **Task routing isn't perfect.** Casual phrasing sometimes confuses the classifier that decides "is this a conversation or a task" — e.g. "open chatgpt and talk about me" may get treated as conversation instead of an action. A fix is planned for v2.
-- **No background/looping tasks yet.** TARZ can't currently do things like "check this every 5 seconds and respond." Every command is one request → one response, no persistent background loops.
-- **Memory (RAG) is functional but basic.** It saves and retrieves tasks, conversations, and preferences, but isn't deeply context-aware yet. This is actively being improved.
-- **Expect occasional bugs.** This was shipped intentionally early rather than polished indefinitely — building momentum mattered more than perfection.
-
-If you hit bugs, that's expected at this stage. Feel free to fork it, fix things, and make it your own.
-nb : maybe covered by bugs 🌚
+Both work system-wide, not just while a TARZ window has focus.
 
 ---
 
 ## Budget-Friendly by Design
 
-TARZ is built to run entirely on **free API tiers** — no subscriptions, no paid plans, no credit card required to get started. Every service used (Groq, Gemini, Cerebras, GitHub Models, OpenWeatherMap) has a generous free tier that covers normal daily use.
+TARZ is built to run entirely on **free API tiers** — no subscriptions required to get started. Every service used has a free tier that covers normal daily use.
 
-This is intentional. The goal was to build something genuinely useful that anyone can run without spending money.
+**Heads up on "free" tiers:** some providers (Cerebras, SambaNova) have moved to requiring a card on file even for their free tier — TARZ doesn't depend on either of those anymore for exactly that reason. If a provider you're using starts asking for payment info unexpectedly, that's the provider changing policy, not a TARZ bug — check their dashboard before assuming something's broken.
 
 **The trade-off is latency.** Free-tier APIs have rate limits and occasional queuing delays, which means TARZ sometimes pauses a second or two between steps when processing complex tasks. If you want a faster, near-real-time experience:
 
-- Replace the free Groq/Cerebras calls with a paid OpenAI or Anthropic API key (just swap the model in `Main/tarz.py`)
-- Use a local model via Ollama (already partially supported — `langchain-ollama` is in the stack)
+- Swap in a paid API key for any stage in the table above
+- Use a local model via Ollama for tool-calling or chat
 - Host your own inference endpoint
 
-But for most everyday use — playing music, checking weather, sending messages, quick conversations — the free tier is perfectly fine and the latency is barely noticeable. The point was to prove you don't need to pay to build something like this.
+But for most everyday use — playing music, checking weather, sending messages, quick conversations — the free tier is perfectly fine and the latency is barely noticeable.
 
 ## What TARZ Can Do
 
 - Control your computer — open apps, click UI elements, type, use keyboard shortcuts
-- See your screen — uses Gemini vision + a grid-overlay system to locate and click on-screen elements, with OCR as a first pass
-- Listen and speak — Whisper for speech-to-text, Piper for text-to-speech, hands-free via `Ctrl+Space`
-- Hold real conversations — routes between a "tool-calling" brain (for actions) and a "conversation" brain (for chat)
-- Remember things — RAG-based memory for past tasks, conversations, and user preferences, with correction support ("that's wrong, actually...")
+- See your screen — vision-based element finding and task-completion verification
+- Listen and speak — live streaming speech-to-text and text-to-speech, hands-free via wake word or `Ctrl+Shift+Space`
+- Hold real conversations — routes between a tool-calling brain (for actions) and a conversation brain (for chat)
+- Remember things — Two-stage retrieval: Vector Retrieval + Cross-Encoder Reranking based memory for past tasks, conversations, and user preferences
 - Play music — Spotify search, play, playlist, next/previous/pause
 - Browse and search — opens Brave/Chrome, searches YouTube, general web search
-- Send messages — WhatsApp search-and-send flow
+- Send messages — WhatsApp, Discord, Telegram search-and-send flows
 - Check the weather — for any city, via OpenWeatherMap
-- Get a news briefing — RSS + DuckDuckGo search, summarized and read aloud
-- Set timers and alarms — with a chime sound
-- Translate text — 30+ languages
-- Control system volume — up, down, mute
-- Run as a background app — system tray icon, desktop GUI window, auto-launch
+- Get a news briefing
+- Set timers and alarms
+- Translate text
+- Control system volume
+- Cancel any task mid-execution with a hotkey
+- Run as a background app — system tray icon, auto-launch on Windows startup
 
 ---
-
 
 ## Gmail Setup (Optional)
 
@@ -102,53 +141,16 @@ Gmail is optional. If you do not add `Tools/gmail_credentials.json`, TARZ will s
 6. First run opens browser automatically for login
 7. After login, token saved — no login needed again
 
-
-## Google Calendar Setup for TARZ (Optional)
+## Google Calendar Setup (Optional)
 
 Calendar is optional. If you do not configure Google credentials, TARZ will still run normally; calendar commands will reply that calendar is not configured yet.
 
- 1. Enable Calendar API
+1. Go to https://console.cloud.google.com — select your existing project (same one used for Gmail)
+2. APIs & Services → Library → search "Google Calendar API" → Enable
+3. Reuse existing OAuth credentials — if you already set up Gmail, reuse `gmail_credentials.json` and add the Calendar scope. If not, create new OAuth 2.0 credentials the same way as the Gmail steps above.
+4. OAuth consent screen → Test users → Add your Gmail address
 
- 2. Go to https://console.cloud.google.com
-    Select your existing project (same one used for Gmail)
-    APIs & Services → Library → search "Google Calendar API" → Enable
-
-3. Reuse existing OAuth credentials
-If you already set up Gmail, you can reuse the same gmail_credentials.json — just add the Calendar scope (Step 4 below). If not:
-
-4. APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID
-Application type: Desktop app
-Download JSON → rename to gmail_credentials.json
-Place inside the Tools/ folder
-
-5. Add yourself as test user
-OAuth consent screen → Test users → Add your Gmail address
-
-TARZ can now:
-
-- 📅 Read calendar events
-- ➕ Create events
-- ✏️ Update events
-- ❌ Delete events
-- 📆 List upcoming schedules
-
-
-
-
-## Tech Stack
-
-| Purpose | Tool |
-|---|---|
-| Tool-calling / agent brain | Cerebras (gpt-oss-120b), GPT-4o-mini (via GitHub Models), Gemini 2.5 Flash — with automatic fallback between them |
-| Conversation brain | Groq (llama-3.3-70b-versatile) |
-| Screen vision | Gemini 2.5 Flash (grid-overlay element finder) + EasyOCR |
-| Speech-to-text | faster-whisper (large-v3-turbo) |
-| Text-to-speech | Piper (local, offline) |
-| Memory / RAG | ChromaDB + SentenceTransformers |
-| Desktop GUI | pywebview (HTML/CSS/JS frontend, Python backend) |
-| System tray | pystray |
-| Computer control | PyAutoGUI |
-| Orchestration | LangChain |
+TARZ can then read, create, update, delete, and list calendar events.
 
 ---
 
@@ -156,33 +158,31 @@ TARZ can now:
 
 ```
 Tarz-ai/
-  Main/
-    tarz.py            ← core brain: think(), LLM routing, memory
-    gui_backend.py      ← pywebview backend for the desktop UI
-    gui.html             ← the desktop UI itself
-  Actions/
-    execute_action.py  ← all tool functions exposed to the LLM
   Audio/
-    tts.py              ← Piper text-to-speech
-    stt.py               ← Whisper speech-to-text
-  Grid_Finder/
-    grid_finder.py     ← Gemini vision + grid overlay element finder
-  Screen_Postition/
-    get_coordinates.py ← OCR-first, grid-vision-fallback element finder
+    stt_live.py         ← Gemini Live STT (streaming) with Cartesia fallback
+    tts.py               ← Groq Orpheus TTS with Cartesia fallback
+    wake_word.py         ← Silero VAD + faster-whisper wake-word listener, hotkey skip
+    orb_overlay.py        ← PyQt6 floating voice orb (mic level + captions)
+  Actions/
+    execute_action.py   ← all generic tool functions exposed to the LLM (click, type, open_app, etc.)
   Tools/
-    rag.py               ← vector memory (tasks, conversations, preferences)
-    weather.py           ← OpenWeatherMap
-    timer.py              ← timers and alarms
-    translator.py        ← language translation
-    news.py                ← news briefing
-  Prompts/
-    prompt.py            ← system prompt for the conversation brain
+    Dedicated_Tools/     ← Spotify, WhatsApp, Discord, Telegram, browser-specific automation
+    cancel_state.py      ← shared cancel-hotkey event/exception
+    rag.py                 ← Two-stage retrieval: Vector Retrieval + Cross-Encoder Reranking memory retrieval, reranking
+    memory.py             ← context_agent → save_context → save_imp_context pipeline
+    gmail.py, calendar_tool.py, real_time_data.py, media_control.py
   Vison/
-    vision.py             ← screen description
-  tarz_tray.py           ← system tray launcher
+    vision.py             ← screen description + task-completion verification, multi-provider vision router
+  Prompts/
+    prompt.py             ← system prompt for the agent
+  playground/
+    cl.py                   ← the current V2 agent entrypoint: LangGraph graph, supervisor/classify/worker nodes, think()
+  tarz_tray.py            ← system tray launcher
   requirements.txt
-  .env                     ← you create this, see below
+  .env                      ← you create this, see below
 ```
+
+> The main agent entrypoint moved during the V2 rewrite — double check the path `tarz_tray.py` actually launches on your machine matches wherever your current agent script lives before setting up autostart below.
 
 ---
 
@@ -192,7 +192,7 @@ Tarz-ai/
 
 - Windows 10/11
 - Python 3.11
-- An NVIDIA GPU is strongly recommended (Whisper + EasyOCR run much faster on CUDA). It will fall back to CPU, just slower.
+- An NVIDIA GPU is recommended (the wake-word model runs much faster on CUDA). It will fall back to CPU, just slower.
 - A working microphone
 
 ### 1. Clone the repo
@@ -219,78 +219,67 @@ pip uninstall -y torch torchvision
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ```
 
-### 4. Download the voice model
-
-TARZ uses Piper for text-to-speech. The model files are not included in this repo (GitHub's 100MB file limit), so download them yourself:
-
-```bash
-pip install piper-tts
-python -m piper.download_voices en_US-ryan-high
-```
-
-This downloads the default male voice (Ryan).
-
-**Want a female voice instead?** Piper has several good ones. To switch:
-
-```bash
-python -m piper.download_voices en_US-amy-medium
-```
-
-Other female voices worth trying: `en_US-hfc_female-medium`, `en_US-kathleen-low`. Browse and preview all available voices at the [Piper voice samples page](https://rhasspy.github.io/piper-samples/).
-
-Once downloaded, open `Audio/tts.py` and change this line to match the voice file you downloaded:
-
-```python
-VOICE_MODEL = "en_US-ryan-high.onnx"   # change to en_US-amy-medium.onnx etc.
-```
-
 ---
 
 ## Environment Variables (API Keys)
 
 Create a `.env` file in the project root with the following:
 
+**Fill in every variable below — the code expects a value in each slot.** If you don't have a spare/second key for a given slot (a second vision key, extra Gemini keys, a second OpenRouter key, etc.), just reuse your existing key's value for that variable too instead of leaving it blank. A demo `.env` walkthrough is coming — the block below is a placeholder until then.
+
 ```dotenv
-OPENROUTER_KEY=
-groq_api=
+# Copy this file to .env and replace the empty values with your own keys.
+# Never commit .env or paste real keys into this file.
+
+# Core model providers
+OPENROUTER_API_KEY=
+OPENROUTER_API_KEY2=
+GROQ_API_KEY=
 GROQ_VISION_KEY_1=
+GROQ_VISION_KEY_2=
 GEMINI_KEY_1=
 GEMINI_KEY_2=
+GEMINI_KEY_3=
+GEMINI_KEY_4=
+GEMINI_KEY_5=
 CEREBRAS_API_KEY=
-OPENWEATHER_KEY=
+CEREBRAS_API_KEY2=
+SAMBANOVA_API_KEY=
 GITHUB_TOKEN=
-```
 
-All of these have generous free tiers. Here's where to get each one:
+# Tools and voice services
+OPENWEATHER_KEY=
+MOONDREAM_API_KEY=
+TAVILY_API_KEY=
+CARTESIA_API_KEY=
+
+# Optional LangSmith tracing
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=Tarz
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_HIDE_INPUTS=true
+LANGSMITH_HIDE_OUTPUTS=true
+
+# Legacy names used by Main/v0.py and a few older tools. Set these to the
+# same values as GROQ_API_KEY and OPENROUTER_API_KEY when using those files.
+groq_api=
+OPENROUTER_KEY=
+GEMINI_API_KEY=
+```
 
 | Variable | What it's for | Where to get it |
 |---|---|---|
-| `groq_api` | Conversation LLM (Llama 3.3) | [console.groq.com/keys](https://console.groq.com/keys) — free signup |
-| `GROQ_VISION_KEY_1` | Screen description / vision tasks via Groq | [console.groq.com/keys](https://console.groq.com/keys) — same console, can be the same key or a separate one |
-| `GEMINI_KEY_1`, `GEMINI_KEY_2` | Screen element finding (grid vision), fallback tool LLM | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free, no card required |
-| `CEREBRAS_API_KEY` | Primary tool-calling LLM | [cloud.cerebras.ai](https://cloud.cerebras.ai/) — free signup |
-| `OPENWEATHER_KEY` | Weather tool | [openweathermap.org/api](https://openweathermap.org/api) — free tier, sign up then generate a key under "API keys" in your account |
-| `OPENROUTER_KEY` | Optional extra LLM routing/fallback | [openrouter.ai/keys](https://openrouter.ai/keys) — free signup |
-| `GITHUB_TOKEN` | Used to access GPT-4o-mini for free via GitHub Models | see detailed steps below |
-
-### Getting your GitHub Token (step by step)
-
-TARZ uses GitHub Models, which gives free access to GPT-4o-mini using a GitHub personal access token instead of an OpenAI key.
-
-1. Make sure you're logged into GitHub, then go directly to: **[github.com/settings/tokens/new](https://github.com/settings/tokens/new)**
-2. Under **Note**, name it something like `TARZ`
-3. Under **Expiration**, choose `No expiration` (or 90 days if you prefer to rotate it)
-4. Under **Select scopes**, tick the top-level **`repo`** checkbox
-5. Scroll to the bottom and click **Generate token**
-6. **Copy the token immediately** — it starts with `ghp_` and you will not be able to see it again after leaving the page
-7. Paste it into your `.env` file:
-   ```
-   GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   ```
+| `GROQ_API_KEY` | Primary tool-calling, classification, chat, and TTS (Orpheus) | [console.groq.com/keys](https://console.groq.com/keys) — free signup |
+| `GROQ_VISION_KEY_1`, `GROQ_VISION_KEY_2` | Screen vision (rotates between them on rate limits) | Same console — can be separate keys for more headroom |
+| `GEMINI_KEY_1`–`GEMINI_KEY_4` | Live speech-to-text (rotates across all provided keys) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free, no card required |
+| `OPENROUTER_API_KEY` | Fallback for tool-calling, classification, chat, and vision | [openrouter.ai/keys](https://openrouter.ai/keys) — free signup, still requires an account/key even for free models |
+| `CARTESIA_API_KEY` | Fallback TTS and STT | [play.cartesia.ai](https://play.cartesia.ai) — free tier available (personal/non-commercial use, credit-limited) |
+| `OPENWEATHER_KEY` | Weather tool | [openweathermap.org/api](https://openweathermap.org/api) — free tier, generate a key under "API keys" in your account |
 
 ### Tip: use multiple Gemini keys for better reliability
 
-Gemini's free tier has per-key rate limits. TARZ is built to rotate between multiple Gemini keys automatically when one hits a rate limit (used in the grid vision finder and as a tool-LLM fallback). For smoother performance, especially if you use TARZ heavily, create 2–3 separate Gemini API keys (just sign up with different Google accounts, or check if AI Studio allows multiple keys per account) and add them as `GEMINI_KEY_1`, `GEMINI_KEY_2`, `GEMINI_KEY_3`, etc. The code already looks for keys in this numbered pattern.
+Gemini's free tier has per-key rate limits, and TARZ's live STT rotates automatically across every `GEMINI_KEY_*` you provide. For smoother performance, especially under heavy use, create 2–4 separate keys and add them as `GEMINI_KEY_1`, `GEMINI_KEY_2`, etc. — the code already looks for keys in this numbered pattern.
 
 ---
 
@@ -300,56 +289,94 @@ Gemini's free tier has per-key rate limits. TARZ is built to rotate between mult
 python tarz_tray.py
 ```
 
-This starts TARZ in your system tray (look for the icon near your clock) and automatically opens the desktop chat window. From there:
+This starts TARZ in your system tray (look for the icon near your clock). Right-click the tray icon for options, including quitting.
 
-- Type a message and press `Enter`, or
-- Press `Ctrl+Space` anywhere in the window to talk
-- Toggle the `VOICE` switch in the top right to turn spoken replies on/off
+Once running, either:
+- Say **"Tarz"** to wake it, or
+- Press **`Ctrl+Shift+Space`** to skip the wake word and start listening immediately
 
-Right-click the tray icon for **Open TARZ** (reopen the window) or **Quit**.
+Press **`Ctrl+Space`** anytime to cancel whatever it's currently doing.
+
+### Run TARZ automatically on Windows startup
+
+**Option A — Startup folder (simplest):**
+
+1. Press `Win+R`, type `shell:startup`, press Enter — this opens your Startup folder.
+2. Right-click `tarz_tray.py` (or a `.bat` file that runs `venv\Scripts\python.exe tarz_tray.py` from your project folder) → Create shortcut.
+3. Move that shortcut into the Startup folder.
+4. TARZ now launches automatically at every login.
+
+**Option B — Task Scheduler (more reliable, runs hidden with no console window):**
+
+1. Open Task Scheduler → Create Task (not "Create Basic Task").
+2. **General tab:** name it, check "Run whether user is logged on or not" if you want it hidden, or "Run only when user is logged on" for a normal session.
+3. **Triggers tab:** New → "At log on".
+4. **Actions tab:** New → Program: `C:\path\to\Tarz-ai\venv\Scripts\pythonw.exe` (use `pythonw.exe`, not `python.exe`, to avoid a console window) → Arguments: `tarz_tray.py` → Start in: `C:\path\to\Tarz-ai`.
+5. Save. TARZ now starts silently in the background at every login.
 
 ---
 
 ## Customizing TARZ
 
-- **System behavior / personality** — edit the `SYSTEM` prompt inside `Main/tarz.py`. This is where TARZ's identity, tool-use rules, and app-specific workflows (Spotify, WhatsApp, YouTube, etc.) are defined.
-- **Add a new tool** — write the logic in `Tools/`, wrap it with `@tool` in `Actions/execute_action.py`, and add it to the `TOOLS` list in `tarz.py`.
-- **Add a new app workflow** — add a step-by-step flow to the `SYSTEM` prompt following the existing examples (Spotify, WhatsApp, etc.).
-- **App shortcuts** — defined in `app_shortcut.py` as a dictionary of app → action → keybind.
-- **Voice** — see the voice model section above to swap TTS voices.
-- **GUI look** — `Main/gui.html` is a single self-contained file (HTML/CSS/JS), no build step needed. Edit and reload.
+- **System behavior / personality** — edit the `SYSTEM` prompt inside `Prompts/prompt.py`.
+- **Add a new tool** — write the logic in `Tools/`, wrap it with `@tool` in `Actions/execute_action.py`, and add it to the relevant category in `CATEGORY_TOOLS`.
+- **Add a new app workflow** — build a dedicated tool under `Tools/Dedicated_Tools/`, following the existing examples (Spotify, WhatsApp, Discord, Telegram).
+- **Voice** — TTS voice is set via the Cartesia/Groq voice IDs in `Audio/tts.py`.
+- **Cancel/wake hotkeys** — change the key combos in the main agent file where `keyboard.add_hotkey(...)` is registered.
 
 ---
 
-## Important message
+## Important Notes
 
-- It may take sometime to execute, especially to find screen position and clicking with curser, if its taking too long restart the app
-- Cursor clicks can be inaccurate when clicking on ui elements sometimes 
-- If you give Tarz a task like play a specific song of spotify or any thing , dont interrupt with keyborad or hovering mouse it can make the ai to take more time or fail to execute
+- Screen-vision tasks can take a few seconds — that's the verification step working, not a hang. If something's taking unusually long, `Ctrl+Space` to cancel and retry.
+- Cursor clicks can be inaccurate on some UI elements — this is an inherent limitation of vision-based GUI automation, not something a restart fixes.
+- If you give TARZ a task like playing a specific song, avoid interrupting with keyboard or mouse mid-task — it can slow down or fail the in-progress action.
+
+## Advantages and Current Limitations
+
+### Advantages
+
+- Runs as a Windows desktop assistant with a system tray launcher and hands-free voice control.
+- Supervised, multi-step execution with visual verification instead of a single blind action per request.
+- Every model call — tool-calling, classification, chat, and vision — has an automatic fallback provider.
+- Combines voice, vision, web information, productivity integrations, and desktop control in one workflow.
+- Optional Gmail, Calendar, and LangSmith tracing can be enabled without making every feature mandatory.
+
+### Limitations and known bugs ⚠️
+
+- TARZ works, and I use it daily, but it is early, actively-developed software built by one curious person with AI as a coding partner — not a polished commercial product. Specifically:
+- GUI automation is inherently brittle. Screen resolution, Windows scaling, application versions, language, focus, permissions, login state, and popups can change the result.
+- Vision and LLM providers can be slow, rate-limited, unavailable, or occasionally misunderstand a request. Completion verification adds reliability but can also add noticeable latency.
+- Voice recognition depends on microphone hardware, background noise, and provider availability. The wake-word listener can use CPU and may need device-specific tuning.
+- Memory is local and useful for recall, but it is not yet a perfect long-term personal knowledge system. Review and correct important information.
+- TARZ can send messages, control media, interact with browser pages, and initiate calls. Keep it supervised; do not use it for high-risk, irreversible, financial, medical, legal, or security-sensitive actions.
+- **Screen data is not processed locally.** Screen vision (used to describe your screen and to verify a task actually completed) sends a screenshot to a cloud provider (Groq or OpenRouter) for analysis — it is not analyzed on your machine. This matters most for automation that touches private content: if TARZ is verifying a WhatsApp message got sent, or reading your screen while a personal email is open, that screen content is leaving your device and going to a third-party provider. Weigh that before pointing TARZ at anything sensitive, and review each provider's own data-handling policy if this matters to you.
+- Task routing isn't perfect.** Casual phrasing can occasionally confuse the classifier that decides which category a request belongs to.
+- No background/looping tasks yet.** TARZ can't currently do things like "check this every 5 seconds and respond." Every command is one request → one response, no persistent background loops.
+
+
+---
+
+
+
+## Contributing
+
+Contributions are welcome. If you find a bug, please open an issue with your Windows version, Python version, a clear reproduction path, relevant logs, and screenshots only when they do not contain private information. Pull requests are especially useful for improving app-specific tools, reliability across display setups, voice handling, tests, documentation, and safer confirmation flows.
+
+Before submitting a pull request, keep secrets out of commits, update `requirements.txt` if you add an import, and explain how you tested the change. Small, focused improvements are easier to review and integrate.
 
 ## What's Next (Roadmap)
 
-- Smarter, properly-tuned RAG memory (in progress — I'm learning this properly now)
-- Better task-vs-conversation classification
 - Background/looping task support
-- Calendar and reminders integration
-- System info tool (CPU/RAM/battery)
-- Voice fine-tuning for more natural speech
+- Further tuning of the vision router for consistency
+- More dedicated app workflows
+
 
 ---
 
-## A Closing Note
+## LangSmith Tracing
 
-This is a personal, evolving project — built by someone learning in public with AI as a collaborator, not a finished product from a team. If something breaks, that's part of the deal at this stage. Fork it, break it further, fix it, learn from it — that's exactly how this project came to exist in the first place.
-
-If there is any errors during the cloning or try to run Tarz I know you are going to fix it cause you are a dev ,, 
-
-Seeeyaa 🙂‍↔️👋...
-# LangSmith tracing
-
-TARZ sends one parent trace per request to LangSmith, with the LangGraph router,
-LLM calls, and tool executions shown as nested runs. To enable it, install the
-dependencies and add these values to `.env` (use `.env.example` as a template):
+TARZ sends one parent trace per request to LangSmith, with the LangGraph router, LLM calls, and tool executions shown as nested runs. To enable it, install the dependencies and add these values to `.env`:
 
 ```env
 LANGSMITH_TRACING=true
@@ -360,9 +387,12 @@ LANGSMITH_HIDE_INPUTS=true
 LANGSMITH_HIDE_OUTPUTS=true
 ```
 
-Run the application normally and open the `Tarz` project in LangSmith. LangSmith
-traces execution, not a browsable copy of the local folder; each top-level trace
-is labelled `playground/cl.py` so its source is clear. Inputs and outputs are hidden
-by default to avoid uploading prompts, retrieved memories, screen text, or tool
-results; change either `LANGSMITH_HIDE_*` setting to `false` if you explicitly
-want payload capture.
+Run the application normally and open the `Tarz` project in LangSmith. Inputs and outputs are hidden by default to avoid uploading prompts, retrieved memories, screen text, or tool results; set either `LANGSMITH_HIDE_*` value to `false` if you explicitly want payload capture.
+
+---
+
+## A Closing Note
+
+This is a personal, evolving project — built by someone learning in public with AI as a collaborator, not a finished product from a team. If something breaks, that's part of the deal at this stage. Fork it, break it further, fix it, learn from it — that's exactly how this project came to exist in the first place.
+
+Seeeyaa 🙂‍↔️👋...
