@@ -1,19 +1,45 @@
 # TARZ — Personal Desktop AI Assistant
 
-A Jarvis-style AI assistant for Windows that can see your screen, control your computer, hold conversations, remember things about you, and respond by voice.
+A Jarvis-style Semi Autonomous AI assistant for Windows that can see your screen, control your computer, hold conversations, remember things about you, and respond by voice.
+
+---
+
+---
+
+## Demo
+
+Three clips — together they show real multi-app task execution (including honest latency, not hidden), genuine screen understanding, and TARZ describing its own capabilities in its own words.
+
+### Multi-step task: Spotify → WhatsApp
+
+One spoken instruction, two completely different apps: TARZ opens Spotify, plays a song, then sends a WhatsApp message to a contact — recorded in full, including the real wait time between steps (sped up in places rather than cut out, so the latency mentioned in the [Budget-Friendly by Design](#budget-friendly-by-design) section below is visible, not hidden).
+
+<video src="demo/Video Project 2.mp4" controls></video>
+
+### Reading and understanding the screen
+
+Asked what's currently on screen while "Attention Is All You Need" is open — TARZ identifies the paper by name and gives a brief summary of the paragraph, straight from reading the screen.
+
+<video src="demo/Video nnn.mp4" controls></video>
+
+### TARZ explaining itself
+
+Asked directly what it can do — TARZ describes its own capabilities in its own words.
+
+<video src="demo/Video Project 2 (1).mp4" controls></video>
 
 ---
 
 ## V2: Agent Workflow for Desktop Tasks
 
-TARZ V2 turns one request into a controlled desktop workflow. A LangGraph supervisor classifies the request, gives only the relevant tools to a worker, checks the outcome with screen vision, and can retry when a visual action isn't complete. The tray application launches the current V2 agent.
+TARZ V2 turns one request into a controlled desktop workflow. A LangGraph supervisor hands the request to a single tool-bound agent with the full toolset available, checks the outcome with screen vision, and can retry when a visual action isn't complete. The tray application launches the current V2 agent.
 
 ### V2 highlights
 
-- **Category-based routing:** requests are routed to realtime information, productivity, system, media, app control, or chat workers instead of exposing every tool on every request.
-- **Supervised multi-step execution:** workers can perform a sequence of actions and report back to the supervisor. Step limits (6 worker steps, 12 total steps) help prevent runaway loops.
+- **Flat, single-agent tool routing:** every request goes to one tool-bound agent with the entire toolset available, instead of first classifying into a category. This wasn't the original design — see [Testing & Design Decisions](#testing--design-decisions) below for why it changed.
+- **Supervised multi-step execution:** the agent can perform a sequence of actions and report back to the supervisor. Step limits (6 worker steps, 12 total steps) help prevent runaway loops.
 - **Visual completion checks:** UI-changing tasks are verified through screen vision before success is reported (a click alone doesn't prove anything — the supervisor checks whether the screen actually shows the result). Information-only and non-visual tasks skip this extra latency.
-- **Multi-provider fallback everywhere:** every LLM call — tool-calling, classification, casual chat, and screen vision — has an automatic fallback provider that kicks in on rate limits or outages, not just a single point of failure.
+- **Multi-provider fallback everywhere:** every LLM call — tool-calling, casual chat, and screen vision — has an automatic fallback provider that kicks in on rate limits or outages, not just a single point of failure.
 - **Live, streaming voice pipeline:** both speech-to-text and text-to-speech stream over a persistent connection instead of record-then-transcribe, so there's no clipped first word and lower latency.
 - **Hands-free follow-ups:** after TARZ finishes speaking, it listens for a follow-up for a short window without needing the wake word again — no separate "detect speech, then transcribe" handoff, so nothing gets cut off.
 - **Cancel anytime:** a global hotkey interrupts an in-progress task at the next safe checkpoint, even mid-multi-step-execution.
@@ -43,15 +69,22 @@ Dedicated tools are more convenient for repeatable tasks, but they are still GUI
 
 This started purely out of curiosity. I watched a 10-minute LangChain tutorial on YouTube and thought — *could I actually build something like Jarvis? An AI that sees my screen and controls my PC?*
 
-That's it. No roadmap, no grand plan, no prior professional dev background. Just curiosity that snowballed into months of building, breaking, and rebuilding — and V2 has been a full architectural rewrite on top of that.
+That's it. No roadmap, no grand plan, no prior professional dev background. Just curiosity that snowballed into months of building, breaking, and rebuilding — and V2 has been a full architectural rewrite on top of that after i learned more .
 
 I designed the architecture myself — how the tool-calling and conversation brains should split and route, when to bring in vision, how memory should fit into the flow, what TARZ should and shouldn't be able to do. The actual coding I did with AI as my pair-programmer: writing implementations, debugging errors together, and iterating fast on each piece until it matched what I had in mind. I'd decide the what and the why, AI helped me get to the how faster — then I'd test it, find what didn't fit, and tweak it myself until it worked the way I wanted. UI elements were built with AI tools too.
 
-Along the way I picked up real concepts — RAG (retrieval-augmented generation), tool-calling, vector embeddings, agent loops, multi-agent supervision — by building with them directly with the help of AI, since I'm new to a lot of these concepts, instead of reading about them first. If you're someone who wants to build something like this yourself: you don't need to know every concept upfront. Design the system you want, use AI to move faster on implementation, and tighten the gaps yourself as you learn.
 
-I used AI as a Tool not depened on it 
+
+To be clear about how AI factored into this: I used it as a tool I directed, not something I depended on to think for me. Every architecture decision, every test, and every debugging session that traced an error back to its real cause was me driving the process — AI wrote code faster than I could have alone, but it didn't decide what to build or whether something was actually working.
+
 ---
 
+## Testing & Design Decisions
+
+Not every choice in this architecture was right on the first attempt — a couple of the biggest ones changed after actually testing them against real usage, the way a team would evaluate before shipping, rather than just picking whatever seemed reasonable and moving on.
+
+- **Tool routing: category-based → flat single-agent.** V2 originally split tools into categories (realtime info, productivity, system, media, app control, chat) with a separate classification step choosing which one applied before a worker ran. In testing, this added a second point of failure and — more importantly — caused real hallucination in routing: a request could get classified into the wrong category, silently hiding the exact tool it needed and causing the model to either fail or call something unrelated instead. Re-testing the same tasks against a flat list — every tool exposed to one agent at once, no classification step — gave noticeably better, more consistent results with current tool-calling models. The classifier was removed entirely based on that result, not just simplified for its own sake.
+- **Memory retrieval: hybrid over Vector Retrieval + Cross-Encoder Reranking memory retrieval, reranking** I tested hybrid BM25 + vector retrieval with cross-encoder reranking against plain vector-only retrieval for the memory system, evaluated with Hit Rate@5. The hybrid approach performed better, so that's the retrieval method TARZ's memory actually runs on now, not just the first thing that worked.
 
 ## Tech Stack
 
@@ -59,15 +92,13 @@ Every stage below has a primary provider and an automatic fallback — if the pr
 
 | Purpose | Primary | Fallback |
 |---|---|---|
-| Tool-calling (agent brain) | Groq — `openai/gpt-oss-120b` | OpenRouter — `openrouter/free` |
-| Task classification / routing | Groq — `openai/gpt-oss-120b` (temperature 0) | OpenRouter — `openrouter/free` |
-| Casual conversation | Groq — `openai/gpt-oss-120b` (temperature 0.7) | OpenRouter — `openrouter/free` |
+| Tool-calling & conversation (single agent, no separate router) | Groq — `openai/gpt-oss-120b` | OpenRouter — `openrouter/free` → Gemini — `gemini-3.7-flash` |
 | Screen vision (describe screen, verify task completion) | Groq — `qwen/qwen3.8-27b` | OpenRouter — `openrouter/free` (image-capable) |
 | GUI click targeting | Moondream `.point()` API | — |
 | Speech-to-text (live utterance) | Gemini Live streaming transcription (rotates across up to 4 keys) | Cartesia — `ink-2` (native turn detection, streaming) |
 | Wake word detection ("Tarz") | Silero VAD + local `faster-whisper` (`small`, CPU) | — |
 | Text-to-speech | Groq — Orpheus (`canopylabs/orpheus-v1-english`) | Cartesia — `sonic-3` (streaming) |
-| Memory / RAG | ChromaDB + Two-stage retrieval: Vector Retrieval + Cross-Encoder Reranking
+| Memory / RAG | ChromaDB — hybrid BM25 + vector retrieval, cross-encoder reranking | — |
 | Orchestration | LangGraph `StateGraph`, `MemorySaver` checkpointer | — |
 | Voice overlay | PyQt6 floating orb (mic level + live captions) | — |
 | App launching | `os.startfile` (Windows App Paths / PATH resolution) | — |
@@ -108,8 +139,8 @@ But for most everyday use — playing music, checking weather, sending messages,
 - Control your computer — open apps, click UI elements, type, use keyboard shortcuts
 - See your screen — vision-based element finding and task-completion verification
 - Listen and speak — live streaming speech-to-text and text-to-speech, hands-free via wake word or `Ctrl+Shift+Space`
-- Hold real conversations — routes between a tool-calling brain (for actions) and a conversation brain (for chat)
-- Remember things — Two-stage retrieval: Vector Retrieval + Cross-Encoder Reranking based memory for past tasks, conversations, and user preferences
+- Hold real conversations — the same tool-bound agent handles both actions and casual chat, no separate router deciding which
+- Remember things — hybrid BM25 + vector memory with cross-encoder reranking for past tasks, conversations, and user preferences
 - Play music — Spotify search, play, playlist, next/previous/pause
 - Browse and search — opens Brave/Chrome, searches YouTube, general web search
 - Send messages — WhatsApp, Discord, Telegram search-and-send flows
@@ -288,6 +319,7 @@ Gemini's free tier has per-key rate limits, and TARZ's live STT rotates automati
 ```bash
 python tarz_tray.py
 ```
+IF YOU GOT ANY ERROR RUNNING THROUGH TARZ_TRAY.PY RUN WITH TARZ.PY INSIDE MAIN FILE 
 
 This starts TARZ in your system tray (look for the icon near your clock). Right-click the tray icon for options, including quitting.
 
@@ -319,7 +351,7 @@ Press **`Ctrl+Space`** anytime to cancel whatever it's currently doing.
 ## Customizing TARZ
 
 - **System behavior / personality** — edit the `SYSTEM` prompt inside `Prompts/prompt.py`.
-- **Add a new tool** — write the logic in `Tools/`, wrap it with `@tool` in `Actions/execute_action.py`, and add it to the relevant category in `CATEGORY_TOOLS`.
+- **Add a new tool** — write the logic in `Tools/`, wrap it with `@tool` in `Actions/execute_action.py`, and add it to `ALL_TOOLS`.
 - **Add a new app workflow** — build a dedicated tool under `Tools/Dedicated_Tools/`, following the existing examples (Spotify, WhatsApp, Discord, Telegram).
 - **Voice** — TTS voice is set via the Cartesia/Groq voice IDs in `Audio/tts.py`.
 - **Cancel/wake hotkeys** — change the key combos in the main agent file where `keyboard.add_hotkey(...)` is registered.
@@ -338,7 +370,7 @@ Press **`Ctrl+Space`** anytime to cancel whatever it's currently doing.
 
 - Runs as a Windows desktop assistant with a system tray launcher and hands-free voice control.
 - Supervised, multi-step execution with visual verification instead of a single blind action per request.
-- Every model call — tool-calling, classification, chat, and vision — has an automatic fallback provider.
+- Every model call — tool-calling, chat, and vision — has an automatic fallback provider.
 - Combines voice, vision, web information, productivity integrations, and desktop control in one workflow.
 - Optional Gmail, Calendar, and LangSmith tracing can be enabled without making every feature mandatory.
 
@@ -351,8 +383,8 @@ Press **`Ctrl+Space`** anytime to cancel whatever it's currently doing.
 - Memory is local and useful for recall, but it is not yet a perfect long-term personal knowledge system. Review and correct important information.
 - TARZ can send messages, control media, interact with browser pages, and initiate calls. Keep it supervised; do not use it for high-risk, irreversible, financial, medical, legal, or security-sensitive actions.
 - **Screen data is not processed locally.** Screen vision (used to describe your screen and to verify a task actually completed) sends a screenshot to a cloud provider (Groq or OpenRouter) for analysis — it is not analyzed on your machine. This matters most for automation that touches private content: if TARZ is verifying a WhatsApp message got sent, or reading your screen while a personal email is open, that screen content is leaving your device and going to a third-party provider. Weigh that before pointing TARZ at anything sensitive, and review each provider's own data-handling policy if this matters to you.
-- Task routing isn't perfect.** Casual phrasing can occasionally confuse the classifier that decides which category a request belongs to.
-- No background/looping tasks yet.** TARZ can't currently do things like "check this every 5 seconds and respond." Every command is one request → one response, no persistent background loops.
+- **Task routing isn't perfect.** Even with the classifier removed, casual phrasing can occasionally lead the agent to pick the wrong tool or miss one it should have used — flat routing tested better than categories, not perfectly.
+- **No background/looping tasks yet.** TARZ can't currently do things like "check this every 5 seconds and respond." Every command is one request → one response, no persistent background loops.
 
 
 ---
@@ -393,6 +425,8 @@ Run the application normally and open the `Tarz` project in LangSmith. Inputs an
 
 ## A Closing Note
 
-This is a personal, evolving project — built by someone learning in public with AI as a collaborator, not a finished product from a team. If something breaks, that's part of the deal at this stage. Fork it, break it further, fix it, learn from it — that's exactly how this project came to exist in the first place.
+This is a personal, evolving project — built by someone learning in public with AI as a collaborator, not a finished product from a team. If something breaks, that's part of the deal at this stage. Fork it, break it further, fix it, learn from it — that's exactly how this project came to exist in the first place. 
+
+If 
 
 Seeeyaa 🙂‍↔️👋...

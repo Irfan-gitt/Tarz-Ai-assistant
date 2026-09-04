@@ -22,14 +22,6 @@ _MARKDOWN_STRIP = re.compile(r'[*_`#]')
 _URL_STRIP = re.compile(r'https?://\S+')
 
 
-FALLBACK_MESSAGES = [
-    "Looks like first guy fall into sleep so iam here to assist you.",
-    "Oops, the other guy just went to sleep. Good thing I am here.",
-    "Yeah... he is gone ,iam here until he returns ..,, he is kinda lasy ",
-    "Iam again here ..."
-]
-
-
 def _clean_for_speech(text: str) -> str:
     text = _URL_STRIP.sub("", text)
     text = _MARKDOWN_STRIP.sub("", text)
@@ -53,7 +45,8 @@ def _speak_cartesia(text: str):
         with cartesia_client.tts.websocket_connect() as connection:
             ctx = connection.context(
                 model_id="sonic-3",
-                voice={"mode": "id", "id": CARTESIA_VOICE_ID},
+                voice={"mode": "id", "id": CARTESIA_VOICE_ID,
+                       "speed": 0.65, "pitch": 1.0},
                 output_format={"container": "raw",
                                "encoding": "pcm_f32le", "sample_rate": 44100},
                 language="en",
@@ -79,8 +72,6 @@ def speak(text: str):
         print(f"[TTS] Groq failed ({e}), falling back to Cartesia")
         try:
 
-            fallback_message = random.choice(FALLBACK_MESSAGES)
-            _speak_cartesia(fallback_message)
             _speak_cartesia(text)
         except Exception as e2:
             print(f"[TTS] Cartesia also failed: {e2}")

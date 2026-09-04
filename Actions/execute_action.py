@@ -123,7 +123,7 @@ def clipboard(action: str, text: str = "") -> str:
 @tool
 def open_app(app_name: str) -> str:
     """Open any application by name using Windows search."""
-    pyautogui.press("win")
+    pyautogui.hotkey("win", "s")
     time.sleep(1)
     pyautogui.write(app_name, interval=0.05)
     time.sleep(1)

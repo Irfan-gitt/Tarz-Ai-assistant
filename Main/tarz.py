@@ -1,5 +1,4 @@
 
-
 import keyboard
 import winreg
 import threading
@@ -42,6 +41,8 @@ from Tools.media_control import media_play_pause, media_next_track, media_previo
 from pydantic import BaseModel, Field
 from Audio.stt import live_listen
 from Audio.wake_word import wait_for_wake_word, play_done_chime, wake_hotkey_event
+
+from langchain_google_genai import ChatGoogleGenerativeAI
 from Tools.cancel_state import cancel_event, TaskCancelled, check_cancel
 from langchain_openrouter import ChatOpenRouter
 from Audio.tts import speak
@@ -52,7 +53,7 @@ load_dotenv()
 os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "false")
 os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "false")
 
-api_key = os.getenv("GROQ_API_KEY")
+api_key_g = os.getenv("GROQ_API_KEY")
 api_cb = os.getenv("CEREBRAS_API_KEY")
 
 
@@ -70,32 +71,8 @@ ALL_TOOLS = [
     telegram_message_user,
 ]
 
-CATEGORY_TOOLS = {
-    "realtime_info": [rt_data, wether_app, translate, news_update],
 
-    "productivity": [
-        send_email, read_emails, search_emails,
-        create_event, list_events, delete_event,
-        set_alarm, set_timer,
-    ],
-
-    "system": [volume_control, clipboard, wait],
-
-    "media": [media_play_pause, media_previous_track, media_next_track],
-
-
-    "app_control": [
-        click, type_text, press_key, open_app, use_shortcut, read_screen,
-        spotify_play_song, spotify_play_playlist,
-        whatsapp_send_message, whatsapp_call_contact, whatsapp_end_call,
-        discord_send_message, discord_toggle_mute, discord_toggle_deafen,
-        discord_answer_call, discord_decline_call,
-        browser_open_url, telegram_message_user,
-    ],
-
-    "chat": [],
-}
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY2")
 SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 
 print("[Init] Setting up LLMs...")
@@ -103,23 +80,49 @@ print("[Init] Setting up LLMs...")
 
 def listen():
     return live_listen()
-    # return input("You:")
+    # return input("You
+    # :")
 
 
 TOOL_LLMS = [
-    ChatGroq(api_key=api_key, temperature=0.7, model="openai/gpt-oss-120b"),
-    ChatOpenRouter(model="openrouter/free", temperature=0.2),
+    ChatGroq(api_key=api_key_g, temperature=0, model="openai/gpt-oss-120b"),
+    ChatGroq(api_key=api_key_g, temperature=0, model="qwen/qwen3.6-27b"),
+    ChatGoogleGenerativeAI(
+        model="gemini-3.7-flash",
+        google_api_key=os.getenv("GEMINI_KEY_5"),
+        temperature=0.2,
+    ),
+    ChatOpenRouter(model="openrouter/free", temperature=0,
+                   api_key=OPENROUTER_API_KEY),
+
+
 ]
 
 CLASSIFY_LLMS = [
-    ChatGroq(api_key=api_key, temperature=0.7, model="openai/gpt-oss-120b"),
-    ChatOpenRouter(model="openrouter/free", temperature=0),
+    ChatGroq(api_key=api_key_g, temperature=0, model="openai/gpt-oss-120b"),
+    ChatGroq(api_key=api_key_g, temperature=0, model="qwen/qwen3.6-27b"),
+    ChatGoogleGenerativeAI(
+        model="gemini-3.7-flash",
+        google_api_key=os.getenv("GEMINI_KEY_5"),
+        temperature=0,
+    ),
+    ChatOpenRouter(model="openrouter/free", temperature=0,
+                   api_key=OPENROUTER_API_KEY),
+
+
 ]
 
 CHAT_LLMS = [
+    ChatGroq(api_key=api_key_g, temperature=0.6, model="openai/gpt-oss-120b"),
+    ChatGoogleGenerativeAI(
+        model="gemini-3.7-flash",
+        google_api_key=os.getenv("GEMINI_KEY_5"),
+        temperature=0.6,
+    ),
 
-    ChatGroq(api_key=api_key, temperature=0.7, model="openai/gpt-oss-120b"),
-    ChatOpenRouter(model="openrouter/free", temperature=0.7),
+    ChatOpenRouter(model="openrouter/free", temperature=0.6,
+                   api_key=OPENROUTER_API_KEY),
+
 ]
 
 
@@ -129,7 +132,6 @@ class TarzState(TypedDict):
     worker_steps: int
     next: str
     supervisor_instruction: str
-    category: str
 
 
 MAX_WORKER_STEPS = 6
@@ -144,12 +146,6 @@ class SupervisorDecision(BaseModel):
         description="Brief explanation of why this decision was made.")
     instruction: str = Field(
         description="If another action is needed, describe what should be attempted next.")
-
-
-class TaskCategory(BaseModel):
-    category: Literal[
-        "realtime_info", "productivity", "system", "media", "app_control", "chat"
-    ] = Field(description="Best matching category for this request ,If you are confused just chose 'chat' as default", default="chat")
 
 
 def _on_cancel_hotkey():
@@ -197,10 +193,12 @@ def sanitize_for_plain_llm(messages) -> list:
     return out
 
 
+# Chnage this duplication next time
 NO_VERIFY_KEYWORDS = [
     "pause", "resume",
     "volume up", "volume down", "increase volume", "decrease volume",
-    "mute", "unmute", "next track", "previous track", "skip song", "skip track", "alarm", "timer", "set alarm", "set timer",
+    "mute", "unmute", "next track", "previous track", "skip song", "skip track", "alarm", "timer", "set alarm", "set timer",   "read_screen", "rt_data", "wether_app", "news_update",
+    "list_events", "search_emails", "read_emails", "translate",
 ]
 
 INFO_ONLY_TOOLS = {
@@ -220,6 +218,8 @@ def supervisor(state: TarzState) -> dict:
     if steps >= MAX_STEPS:
         return {"next": "finished", "steps": steps + 1}
     if steps == 0:
+        # A MemorySaver keeps fields from previous requests for the same
+        # thread. Clear the old category so a new request is classified.
         return {"next": "route", "steps": steps + 1, "supervisor_instruction": ""}
 
     recent = state["messages"][-6:]
@@ -301,36 +301,6 @@ def route_from_supervisor(state: dict) -> str:
     return state["next"]
 
 
-def classify(state: TarzState) -> dict:
-    check_cancel()
-    history = [m for m in sanitize_for_plain_llm(state["messages"][-6:])
-               if not isinstance(m, SystemMessage)]
-    for llm in CLASSIFY_LLMS:
-        try:
-            result = llm.with_structured_output(TaskCategory).invoke(
-                [SystemMessage(content=(
-                    "Classify this request into exactly one category:\n"
-                    "realtime_info = weather, news, current facts, translation\n"
-                    "productivity = email, calendar, alarms, timers\n"
-                    "system = volume, clipboard, waiting\n"
-                    "media = play/pause/skip on whatever's currently loaded, generic media keys\n"
-                    "app_control = opening/controlling any specific app (Spotify, WhatsApp, "
-                    "Discord, Telegram, browser), clicking, typing, reading the screen\n"
-                    "chat = normal conversation, no action needed"
-                    "IMPORTANT:\n"
-                    "You do not have access to execute any tool yourself. Your ONLY job is picking one category name. Never attempt to call media_play_pause, spotify_play_song,or any other tool directly — even if you see one mentioned in the conversation."
-                ))] + history
-            )
-            return {"category": result.category}
-        except Exception as e:
-            print(f"[classify] {type(llm).__name__} failed: {e}")
-    return {"category": "chat"}
-
-
-def route_from_classify(state: TarzState) -> str:
-    return state["category"]
-
-
 def route_from_worker(state: TarzState) -> str:
     last = state["messages"][-1]
     if not getattr(last, "tool_calls", None):
@@ -382,7 +352,10 @@ Important:
                 provider = type(TOOL_LLMS[current_llm_idx]).__name__
                 err = str(e).lower()
                 failures.append(f"{provider}: {str(e)[:300]}")
-                if any(x in err for x in ("429", "rate", "402", "payment", "quota")):
+                if any(x in err for x in (
+                    "429", "rate", "402", "payment", "quota",
+                    "tools should have a name", "harmonyerror",
+                )):
                     current_llm_idx = (current_llm_idx + 1) % len(TOOL_LLMS)
                     continue
                 raise RuntimeError(f"{provider} tool model failed: {e}") from e
@@ -392,41 +365,24 @@ Important:
     return worker
 
 
-def chat(state: TarzState) -> dict:
-    for llm in CHAT_LLMS:
-        try:
-            return {"messages": [llm.invoke(sanitize_for_plain_llm(state["messages"]))]}
-        except Exception as e:
-            print(f"[chat] {type(llm).__name__} failed: {e}")
-    return {"messages": [AIMessage(content="Something broke on my end — mind trying that again?")]}
+graph = StateGraph(TarzState)
+graph.add_node("supervisor", supervisor)
 
 
 graph = StateGraph(TarzState)
 graph.add_node("supervisor", supervisor)
-graph.add_node("classify", classify)
-graph.add_node("chat", chat)
-
-for category, tools in CATEGORY_TOOLS.items():
-    if category == "chat":
-        continue
-    tools_node = f"{category}_tools"
-    graph.add_node(category, make_worker(tools))
-    graph.add_node(tools_node, ToolNode(tools + [done]))
-    graph.add_conditional_edges(category, route_from_worker, {
-        "tools": tools_node, "supervisor": "supervisor",
-    })
-    graph.add_edge(tools_node, category)
+graph.add_node("agent", make_worker(ALL_TOOLS))
+graph.add_node("agent_tools", ToolNode(ALL_TOOLS + [done]))
 
 graph.add_edge(START, "supervisor")
 graph.add_conditional_edges("supervisor", route_from_supervisor, {
-    "route": "classify", "finished": END
+    "route": "agent", "finished": END
 })
-graph.add_conditional_edges("classify", route_from_classify, {
-    "realtime_info": "realtime_info", "productivity": "productivity",
-    "system": "system", "media": "media", "app_control": "app_control",
-    "chat": "chat",
+graph.add_conditional_edges("agent", route_from_worker, {
+    "tools": "agent_tools", "supervisor": "supervisor",
 })
-graph.add_edge("chat", END)
+graph.add_edge("agent_tools", "agent")
+
 
 app = graph.compile(checkpointer=MemorySaver())
 
@@ -490,11 +446,15 @@ Relevant memories:
             try:
                 fallback = llm.invoke(
                     [SystemMessage(content=SYSTEM), HumanMessage(content=user_input)])
-                response = extract_text(fallback.content)
-                break
+                text = extract_text(fallback.content)
+                if text:
+                    response = text
+                    break
+                print(
+                    f"[think] {type(llm).__name__} fallback returned empty response, trying next...")
             except Exception as e2:
                 print(f"[think] {type(llm).__name__} fallback failed: {e2}")
-        if response is None:
+        if not response:
             response = "Something broke on my end — mind trying that again?"
 
     threading.Thread(target=save_imp_context, args=(

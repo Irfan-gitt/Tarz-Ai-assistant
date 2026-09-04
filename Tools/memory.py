@@ -64,8 +64,14 @@ def save_context(ctx: dict, user_input: str):
 
 
 def save_imp_context(user_input: str, ai_reply: str):
-    ctx = context_agent(user_input, ai_reply)
-    return save_context(ctx, user_input)
+    try:
+        ctx = context_agent(user_input, ai_reply)
+        return save_context(ctx, user_input)
+    except Exception as e:
+        # Memory extraction is best-effort and must not leave an unhandled
+        # exception when the shared LLM provider is temporarily rate-limited.
+        print(f"[memory] Skipped saving context: {type(e).__name__}: {e}")
+        return []
 
 
 def show_all_context():

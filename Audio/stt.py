@@ -1,3 +1,4 @@
+# Audio/stt.py
 import numpy as np
 from Audio.orb_overlay import get_orb
 import os
@@ -11,7 +12,7 @@ from Audio.wake_word import get_best_input_device, play_wake_beep
 load_dotenv()
 
 GEMINI_KEYS = [
-    os.getenv("GEMINI_KEY_1"),
+    os.getenv("GEMINI_KEY_2"),
     os.getenv("GEMINI_KEY_2"),
     os.getenv("GEMINI_KEY_3"),
     os.getenv("GEMINI_KEY_4"),
@@ -33,6 +34,26 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 CHUNK_MS = 100
 CHUNK_FRAMES = SAMPLE_RATE * CHUNK_MS // 1000
+SPEECH_RMS_THRESHOLD = 0.01
+
+
+async def _wait_for_final_or_silence(
+    receive_task: asyncio.Task, last_speech: dict[str, float], timeout: float | None
+) -> bool:
+    """Wait for a final transcript, using ``timeout`` as a silence limit."""
+    if timeout is None:
+        await receive_task
+        return True
+
+    loop = asyncio.get_running_loop()
+    while not receive_task.done():
+        remaining = timeout - (loop.time() - last_speech["at"])
+        if remaining <= 0:
+            return False
+        await asyncio.wait({receive_task}, timeout=min(remaining, 0.25))
+
+    await receive_task
+    return True
 
 
 def _get_client():
@@ -60,6 +81,11 @@ async def _stream_one_utterance(timeout: float | None = None) -> str:
             async with client.aio.live.connect(model=MODEL, config=config) as session:
                 print(f"🟢 Gemini Live connected (key #{current_key_idx + 1})")
                 result = {"text": None}
+                loop = asyncio.get_running_loop()
+                last_speech = {"at": loop.time()}
+
+                def note_speech():
+                    last_speech["at"] = loop.time()
 
                 async def receive():
                     async for response in session.receive():
@@ -78,7 +104,6 @@ async def _stream_one_utterance(timeout: float | None = None) -> str:
                             return
 
                 async def send_mic():
-                    loop = asyncio.get_running_loop()
                     queue = asyncio.Queue()
 
                     def callback(indata, frames, time, status):
@@ -90,6 +115,8 @@ async def _stream_one_utterance(timeout: float | None = None) -> str:
                         samples = np.frombuffer(indata, dtype=np.int16).astype(
                             np.float32) / 32768.0
                         rms = float(np.sqrt(np.mean(samples ** 2)))
+                        if rms >= SPEECH_RMS_THRESHOLD:
+                            loop.call_soon_threadsafe(note_speech)
                         get_orb().update_level(min(rms * 4, 1.0))
 
                     device, hostapi_name = get_best_input_device()
@@ -120,19 +147,15 @@ async def _stream_one_utterance(timeout: float | None = None) -> str:
                 send_task = asyncio.create_task(send_mic())
 
                 try:
-                    if timeout is not None:
-                        await asyncio.wait_for(recv_task, timeout=timeout)
-                    else:
-                        await recv_task
-                except asyncio.TimeoutError:
-                    print("🔇 No follow-up — back to requiring 'Tarz'.")
-                    recv_task.cancel()
-
-                send_task.cancel()
-                try:
-                    await send_task
-                except asyncio.CancelledError:
-                    pass
+                    if not await _wait_for_final_or_silence(recv_task, last_speech, timeout):
+                        print("🔇 No follow-up — back to requiring 'Tarz'.")
+                        recv_task.cancel()
+                finally:
+                    send_task.cancel()
+                    try:
+                        await send_task
+                    except asyncio.CancelledError:
+                        pass
 
                 return result["text"] or ""
 
@@ -142,9 +165,11 @@ async def _stream_one_utterance(timeout: float | None = None) -> str:
             if any(x in err for x in ("401", "403", "429", "quota", "expired", "invalid", "permission")):
                 print(
                     f"[STT] Key #{current_key_idx + 1} failed ({e}), rotating...")
-                current_key_idx = (current_key_idx + 1) % len(GEMINI_KEYS)
-                continue
-            raise
+            else:
+                print(
+                    f"[STT] Unexpected error on key #{current_key_idx + 1} ({e}), rotating...")
+            current_key_idx = (current_key_idx + 1) % len(GEMINI_KEYS)
+            continue
 
     raise RuntimeError(f"All Gemini keys failed for live STT: {last_error}")
 
@@ -160,6 +185,11 @@ async def _stream_one_utterance_cartesia(timeout: float | None = None) -> str:
             encoding="pcm_s16le",
             sample_rate=SAMPLE_RATE,
         ) as ws:
+            loop = asyncio.get_running_loop()
+            last_speech = {"at": loop.time()}
+
+            def note_speech():
+                last_speech["at"] = loop.time()
 
             async def receive():
                 async for response in ws.receive():
@@ -177,7 +207,6 @@ async def _stream_one_utterance_cartesia(timeout: float | None = None) -> str:
                         return
 
             async def send_mic():
-                loop = asyncio.get_running_loop()
                 queue = asyncio.Queue()
 
                 def callback(indata, frames, time, status):
@@ -188,6 +217,8 @@ async def _stream_one_utterance_cartesia(timeout: float | None = None) -> str:
                     samples = np.frombuffer(indata, dtype=np.int16).astype(
                         np.float32) / 32768.0
                     rms = float(np.sqrt(np.mean(samples ** 2)))
+                    if rms >= SPEECH_RMS_THRESHOLD:
+                        loop.call_soon_threadsafe(note_speech)
                     get_orb().update_level(min(rms * 4, 1.0))
 
                 device, hostapi_name = get_best_input_device()
@@ -215,19 +246,15 @@ async def _stream_one_utterance_cartesia(timeout: float | None = None) -> str:
             send_task = asyncio.create_task(send_mic())
 
             try:
-                if timeout is not None:
-                    await asyncio.wait_for(recv_task, timeout=timeout)
-                else:
-                    await recv_task
-            except asyncio.TimeoutError:
-                print("🔇 No follow-up — back to requiring 'Tarz'.")
-                recv_task.cancel()
-
-            send_task.cancel()
-            try:
-                await send_task
-            except asyncio.CancelledError:
-                pass
+                if not await _wait_for_final_or_silence(recv_task, last_speech, timeout):
+                    print("🔇 No follow-up — back to requiring 'Tarz'.")
+                    recv_task.cancel()
+            finally:
+                send_task.cancel()
+                try:
+                    await send_task
+                except asyncio.CancelledError:
+                    pass
 
             return result["text"] or ""
     finally:
