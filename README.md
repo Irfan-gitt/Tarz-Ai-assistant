@@ -21,7 +21,7 @@ Reading and understanding the screen
 
 Asked what's currently on screen while "Attention Is All You Need" is open — TARZ identifies the paper by name and gives a brief summary of the paragraph, straight from reading the screen.
 
-C:\Users\IRFAN\Desktop\Tarz-ai\demo\Video_nnn.mp4
+https://github.com/user-attachments/assets/ecccc2be-9e3b-42ff-b7d7-591826d45563
 
 
 TARZ explaining itself
