@@ -10,21 +10,21 @@ A Jarvis-style Semi Autonomous AI assistant for Windows that can see your screen
 
 Three clips — together they show real multi-app task execution (including honest latency, not hidden), genuine screen understanding, and TARZ describing its own capabilities in its own words.
 
-# Multi-step task: Spotify → WhatsApp
+### Multi-step task: Spotify → WhatsApp
 
 One spoken instruction, two completely different apps: TARZ opens Spotify, plays a song, then sends a WhatsApp message to a contact — recorded in full, including the real wait time between steps (sped up in places rather than cut out, so the latency mentioned in the Budget-Friendly by Design section below is visible, not hidden).
 
 
 https://github.com/user-attachments/assets/cd3a8c13-08d2-4694-8464-960263e499fb
 
-# Reading and understanding the screen
+### Reading and understanding the screen
 
 Asked what's currently on screen while "Attention Is All You Need" is open — TARZ identifies the paper by name and gives a brief summary of the paragraph, straight from reading the screen.
 
 https://github.com/user-attachments/assets/ecccc2be-9e3b-42ff-b7d7-591826d45563
 
 
-# TARZ explaining itself
+### TARZ explaining itself
 
 Asked directly what it can do — TARZ describes its own capabilities in its own words.
 
