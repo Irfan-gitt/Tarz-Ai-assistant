@@ -310,6 +310,8 @@ GEMINI_API_KEY=
 | `OPENROUTER_API_KEY` | Fallback for tool-calling, classification, chat, and vision | [openrouter.ai/keys](https://openrouter.ai/keys) — free signup, still requires an account/key even for free models |
 | `CARTESIA_API_KEY` | Fallback TTS and STT | [play.cartesia.ai](https://play.cartesia.ai) — free tier available (personal/non-commercial use, credit-limited) |
 | `OPENWEATHER_KEY` | Weather tool | [openweathermap.org/api](https://openweathermap.org/api) — free tier, generate a key under "API keys" in your account |
+| `MOONDREAM_API_KEY` | GUI click targeting | [moondream.ai](https://moondream.ai/) — API key for Moondream |
+| `TAVILY_API_KEY` | Web search | [tavily.com](https://tavily.com/) — API key for web search |
 
 ### Tip: use multiple Gemini keys for better reliability
 
