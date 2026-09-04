@@ -14,25 +14,22 @@ Multi-step task: Spotify → WhatsApp
 
 One spoken instruction, two completely different apps: TARZ opens Spotify, plays a song, then sends a WhatsApp message to a contact — recorded in full, including the real wait time between steps (sped up in places rather than cut out, so the latency mentioned in the Budget-Friendly by Design section below is visible, not hidden).
 
-<!-- Replace this line with the video URL GitHub gives you after uploading -->
 
-PASTE_MULTI_TASK_VIDEO_URL_HERE
+C:\Users\IRFAN\Desktop\Tarz-ai\Video_Project2(1).mp4
 
 Reading and understanding the screen
 
 Asked what's currently on screen while "Attention Is All You Need" is open — TARZ identifies the paper by name and gives a brief summary of the paragraph, straight from reading the screen.
 
-<!-- Replace this line with the video URL GitHub gives you after uploading -->
+C:\Users\IRFAN\Desktop\Tarz-ai\demo\Video_nnn.mp4
 
-PASTE_READ_SCREEN_VIDEO_URL_HERE
 
 TARZ explaining itself
 
 Asked directly what it can do — TARZ describes its own capabilities in its own words.
 
-<!-- Replace this line with the video URL GitHub gives you after uploading -->
+C:\Users\IRFAN\Desktop\Tarz-ai\demo\Video_Project2(1).mp4
 
-PASTE_SELF_EXPLANATION_VIDEO_URL_HERE
 
 ---
 
