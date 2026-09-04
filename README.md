@@ -430,6 +430,5 @@ Run the application normally and open the `Tarz` project in LangSmith. Inputs an
 
 This is a personal, evolving project — built by someone learning in public with AI as a collaborator, not a finished product from a team. If something breaks, that's part of the deal at this stage. Fork it, break it further, fix it, learn from it — that's exactly how this project came to exist in the first place. 
 
-If 
 
 Seeeyaa 🙂‍↔️👋...
