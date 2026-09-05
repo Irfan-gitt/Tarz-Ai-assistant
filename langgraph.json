@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "tarz": "./playground/cl.py:app"
+  },
+  "env": ".env"
+}
