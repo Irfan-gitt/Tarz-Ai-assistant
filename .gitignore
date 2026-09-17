@@ -20,8 +20,7 @@ gmail_token.pickle
 
 # Runtime output and generated media
 output/
-*.wav
-*.mp3
+
 screen.png
 temp/
 
