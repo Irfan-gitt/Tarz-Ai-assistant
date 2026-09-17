@@ -251,6 +251,7 @@ The default `torch` install from `requirements.txt` is CPU-only. For GPU acceler
 ```bash
 pip uninstall -y torch torchvision
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
 ```
 
 ---
