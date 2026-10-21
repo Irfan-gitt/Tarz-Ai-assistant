@@ -7,36 +7,18 @@ NOT USING ANYMORE AS A MAIN ITS NOW A FALL BACK
 
 from google.genai import types
 import time
-import os
 import re
 import pyautogui
 from PIL import Image, ImageDraw, ImageFont
-from dotenv import load_dotenv
 from google import genai
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import GRID_MODELS
 
-load_dotenv()
 
 pyautogui.FAILSAFE = True
 # PyAutoGUI applies this pause after *every* call.  Keep a tiny safety gap, but
 # don't add a full second to each vision-guided click (move + click).
 pyautogui.PAUSE = 0.05
-
-
-GEMINI_KEYS = [
-    os.getenv("GEMINI_KEY_1"),
-    os.getenv("GEMINI_KEY_2"),
-    os.getenv("GEMINI_KEY_3"),
-
-]
-GEMINI_KEYS = [k for k in GEMINI_KEYS if k]  # remove empty
-
-current_key_idx = 0
-
-_clients = [genai.Client(api_key=k) for k in GEMINI_KEYS]
-
-
-def get_gemini_client():
-    return _clients[current_key_idx]
 
 
 COLS = 24
@@ -175,7 +157,6 @@ def cell_to_pixels(
 
 
 def grid_find(target: str) -> dict:
-    global current_key_idx
     print(f"\n[GridFinder] Looking for: '{target}'")
 
     t0 = time.time()
@@ -186,25 +167,17 @@ def grid_find(target: str) -> dict:
     t2 = time.time()
     print(f"[TIMING] screenshot: {t1-t0:.2f}s | draw_grid: {t2-t1:.2f}s")
 
-    response = None
-    for attempt in range(len(GEMINI_KEYS)):
-        try:
-            client = get_gemini_client()
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
+    try:
+        response = get_gateway().run(
+            GRID_MODELS,
+            lambda name, cfg, key: genai.Client(api_key=key).models.generate_content(
+                model=cfg["model"],
                 contents=[_GRID_PROMPT.format(target=target), grid_image],
                 config=_FAST_GRID_CONFIG,
-            )
-            break
-        except Exception as e:
-            print(f"[GridFinder] Attempt {attempt+1} failed: {e}")
-            if "429" in str(e) or "quota" in str(e).lower():
-                current_key_idx = (current_key_idx + 1) % len(GEMINI_KEYS)
-                continue
-            return {"found": False}
-
-    if response is None:
-        print("[GridFinder] All keys exhausted")
+            ),
+        )
+    except AllModelsFailed as e:
+        print(f"[GridFinder] Models exhausted: {e}")
         return {"found": False}
 
     t3 = time.time()

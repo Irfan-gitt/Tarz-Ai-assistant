@@ -1,20 +1,12 @@
 from tavily import TavilyClient
 from ddgs import DDGS
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
-import os
+from Main.llm_gateway import get_gateway
+from Main.config import PLAIN_LLMS, TAVILY_ALL_KEYS
 import re
 from datetime import datetime, timedelta, timezone
 
 
-from dotenv import load_dotenv
-load_dotenv()
-
-
-llm = ChatGroq(
-    api_key=os.getenv("groq_api"),
-    model="openai/gpt-oss-120b"
-)
 
 
 def _local_date_time_answer(query: str) -> str | None:
@@ -52,7 +44,7 @@ def _local_date_time_answer(query: str) -> str | None:
     return f"The current time is {now.strftime('%I:%M %p')} in {timezone_name}."
 
 
-tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+tavily = TavilyClient(api_key=TAVILY_ALL_KEYS[0] if TAVILY_ALL_KEYS else None)
 
 
 def _search_web(query: str):
@@ -170,7 +162,7 @@ def rt_data(query: str) -> str:
             print("[rt_data] Summarizing DDGS results with LLM...")
             context = "\n".join(
                 f"- {r['title']}: {r['body']}" for r in results)
-            summary = llm.invoke(f"""
+            summary = get_gateway().invoke(PLAIN_LLMS, [f"""
 You are a real-time information assistant.
 
 The user asked:
@@ -193,7 +185,7 @@ Rules:
 Search Results:
 
 {context}
-""").content
+"""]).content
 
         output += "=" * 50 + "\n"
         output += f"📋 Here is the summary Boss:\n{summary}\n"

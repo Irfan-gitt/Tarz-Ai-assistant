@@ -1,31 +1,38 @@
 import re
-import os
 from duckduckgo_search import DDGS
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
 import webbrowser
 import subprocess
 import pyautogui
 from PIL import Image
 import time
-from groq import Groq
 import base64
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import PLAIN_LLMS, CLASSIFY_LLMS, VISION_LLMS
+from langchain_core.messages import HumanMessage
 import easyocr
 from rapidfuzz import fuzz
 
-load_dotenv()
-
 reader = easyocr.Reader(['en'])
-# LLM setup-text
-api_key = os.getenv("groq_api")
-llm = ChatGroq(api_key=api_key, temperature=0.7,
-               model="llama-3.3-70b-versatile")
+
+def _ask(prompt, models=PLAIN_LLMS):
+    try:
+        return get_gateway().invoke(models, [prompt]).content
+    except AllModelsFailed as e:
+        print(f"[LLM] All models failed: {e}")
+        return ""
 
 
-# Vision model
-client = Groq(
-    api_key=api_key
-)
+def _ask_vision(prompt, img_b64):
+    message = HumanMessage(content=[
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {
+            "url": f"data:image/png;base64,{img_b64}"}},
+    ])
+    try:
+        return get_gateway().invoke(VISION_LLMS, [message]).content
+    except AllModelsFailed as e:
+        print(f"[Vision] All models failed: {e}")
+        return ""
 
 
 def listen():
@@ -87,7 +94,7 @@ def think(user_input):
         print(f"\n[Step {step+1}]")
 
         # LLM decides next action
-        decision = llm.invoke(conversation_history).content.strip()
+        decision = _ask(conversation_history).strip()
         print(f"Action: {decision}")
 
         conversation_history.append({
@@ -140,18 +147,10 @@ def execute_step(decision):
     elif decision.startswith("SCREENSHOT:"):
         take_screenshot()
         # Send screenshot to vision model
-        response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe what's on screen in one short sentence."},
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:image/png;base64,{get_screenshot_base64()}"}}
-                ]
-            }]
+        description = _ask_vision(
+            "Describe what's on screen in one short sentence.",
+            get_screenshot_base64(),
         )
-        description = response.choices[0].message.content
         return f"Screen shows: {description}"
     elif decision.startswith("CLICK_TEXT:"):
         text = decision.split("CLICK_TEXT:")[1].strip()
@@ -165,27 +164,10 @@ def execute_step(decision):
 
         # Vision fallback with better prompt
         take_screenshot()
-        response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"""Find '{text}' on screen.
-                        Return coordinates of CENTER of that element.
-                        Format:
-                        X: number
-                        Y: number
-                        Only numbers. No explanation."""
-                    },
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:image/png;base64,{get_screenshot_base64()}"}}
-                ]
-            }]
+        result_text = _ask_vision(
+            f"Find '{text}' on screen. Return center coordinates as X: number and Y: number only.",
+            get_screenshot_base64(),
         )
-
-        result_text = response.choices[0].message.content
         x_match = re.search(r"X:\s*(\d+)", result_text)
         y_match = re.search(r"Y:\s*(\d+)", result_text)
 
@@ -297,34 +279,10 @@ def vision_fallback(question):
     with open("screen.png", "rb") as f:
         img_b64 = base64.b64encode(f.read()).decode()
 
-    response = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"""
-                        {question}
-
-                        Return ONLY in this format:
-                        X: number
-                        Y: number
-                        """
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_b64}"
-                        }
-                    }
-                ]
-            }
-        ]
-    )
-
-    result = response.choices[0].message.content.strip()
+    result = _ask_vision(
+        f"{question}\nReturn ONLY in this format:\nX: number\nY: number",
+        img_b64,
+    ).strip()
 
     x_match = re.search(r"X:\s*(\d+)", result)
     y_match = re.search(r"Y:\s*(\d+)", result)
@@ -343,34 +301,14 @@ def vision_fallback(question):
 
 def decide_mode(query):
 
-    response = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a routing AI.\n"
-                    "Decide whether the task needs:\n"
-                    "- OCR (text detection)\n"
-                    "- VISION (icon/UI understanding)\n\n"
-                    "Reply ONLY with:\n"
-                    "OCR\n"
-                    "or\n"
-                    "VISION"
-                )
-            },
-            {
-                "role": "user",
-                "content": query
-            }
-        ]
-    )
-
-    return response.choices[0].message.content.strip()
+    return _ask(
+        "You are a routing AI. Decide whether the task needs OCR or VISION. Reply ONLY OCR or VISION.\n" + query,
+        CLASSIFY_LLMS,
+    ).strip()
 
 
 def decide_action(user_input, result):
-    response = llm.invoke(f"""
+    response = _ask(f"""
     User said: "{user_input}"
     Found element: "{result['text']}" at x={result['x']}, y={result['y']}
     
@@ -388,7 +326,7 @@ def decide_action(user_input, result):
     
     action: type
     value: the text to type
-    """).content.strip()
+    """).strip()
 
     # Parse response
     lines = response.lower().split("\n")

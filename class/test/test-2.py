@@ -12,18 +12,14 @@ Open: http://127.0.0.1:5000
 from duckduckgo_search import DDGS
 from flask import Flask, render_template_string, request, jsonify
 from bs4 import BeautifulSoup
-from groq import Groq
 import feedparser
 import requests
 import pyttsx3
 import threading
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import PLAIN_LLMS
 
 app = Flask(__name__)
-client = Groq(api_key=os.getenv("groq_api"))
 
 # ── RSS Feeds ──────────────────────────────────────────────────────────────────
 RSS_FEEDS = {
@@ -114,22 +110,16 @@ def generate_brief(articles: list, topic: str) -> str:
     ])
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{
-                "role": "user",
-                "content": f"""You are TARZ, an AI assistant giving a spoken news briefing.
+        response = get_gateway().invoke(PLAIN_LLMS, [f"""You are TARZ, an AI assistant giving a spoken news briefing.
 Read these {topic} news articles and give a natural 4-5 sentence spoken brief.
 Sound like a professional news anchor. No bullet points. No markdown. No headers.
 Start directly with the news.
 
 {content}"""
-            }],
-            max_tokens=250
-        )
-        return response.choices[0].message.content.strip()
+        ])
+        return response.content.strip()
 
-    except Exception as e:
+    except AllModelsFailed as e:
         print(f"[Brief] LLM error: {e}")
         return " ".join([a["title"] for a in articles[:3]])
 

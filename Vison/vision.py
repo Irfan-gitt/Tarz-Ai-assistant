@@ -1,13 +1,11 @@
 import re
-import os
 import base64
 import pyautogui
-from dotenv import load_dotenv
 from groq import Groq
-from langchain_openrouter import ChatOpenRouter
+from openai import OpenAI
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import VISION_LLMS
 from langchain_core.messages import HumanMessage
-
-load_dotenv()
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
@@ -16,79 +14,31 @@ def _strip_think(text: str) -> str:
     return _THINK_BLOCK.sub("", text or "").strip()
 
 
-GROQ_API_KEYS = [
-    os.getenv("GROQ_VISION_KEY_1"),
-    os.getenv("GROQ_VISION_KEY_2"),
-]
-current_key = 0
-
-GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
-api_open = os.getenv("OPENROUTER_API_KEY2")
-
-llm_vision_openrouter = ChatOpenRouter(
-    model="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", temperature=0.2, api_key=api_open)
-
-
-def _get_groq_client():
-    return Groq(api_key=GROQ_API_KEYS[current_key])
-
-
 def _ask_vision(img_b64: str, prompt_text: str) -> str:
     """Primary: OpenRouter's free router (auto-picks a free vision-capable
     model). Fallback: Groq qwen3.8-27b, rotating across GROQ_VISION_KEY_*
     on 429, only if OpenRouter fails entirely."""
-    global current_key
-
-    try:
-        print("Trying OpenRouter (openrouter/free)...")
-        message = HumanMessage(content=[
+    message = HumanMessage(content=[
             {"type": "image_url", "image_url": {
                 "url": f"data:image/png;base64,{img_b64}"}},
             {"type": "text", "text": prompt_text},
         ])
-        full_response = ""
-        for chunk in llm_vision_openrouter.stream([message]):
-            if chunk.content:
-                print(chunk.content, end="", flush=True)
-                full_response += chunk.content
-        print()
-        if full_response:
-            return _strip_think(full_response)
-    except Exception as e:
-        print(f"OpenRouter vision error: {e}")
 
-    for _ in range(len(GROQ_API_KEYS)):
-        try:
-            print(f"Trying Groq {GROQ_VISION_MODEL}...")
-            response = _get_groq_client().chat.completions.create(
-                model=GROQ_VISION_MODEL,
-                stream=True,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {
-                            "url": f"data:image/png;base64,{img_b64}"}},
-                        {"type": "text", "text": prompt_text}
-                    ]
-                }]
-            )
-            full_response = ""
-            for chunk in response:
-                if chunk.choices[0].delta.content:
-                    text = chunk.choices[0].delta.content
-                    print(text, end="", flush=True)
-                    full_response += text
-            print()
-            return _strip_think(full_response)
-        except Exception as e:
-            if "429" in str(e):
-                current_key = (current_key + 1) % len(GROQ_API_KEYS)
-                print("Rate limited on Groq, trying next key...")
-                continue
-            print(f"Groq vision error: {e}")
-            break
+    def call(name, cfg, key):
+        if cfg["provider"] == "groq_vision":
+            client = Groq(api_key=key)
+        else:
+            client = OpenAI(api_key=key, base_url="https://openrouter.ai/api/v1")
+        response = client.chat.completions.create(
+            model=cfg["model"], messages=[{"role": "user", "content": message.content}]
+        )
+        return response.choices[0].message.content
 
-    return "All models failed or rate limited. Try again in a minute."
+    try:
+        return _strip_think(get_gateway().run(VISION_LLMS, call))
+    except AllModelsFailed as e:
+        print(f"[vision] All models failed: {e}")
+        return "I couldn't inspect the screen just now."
 
 
 def describe_screen(question):

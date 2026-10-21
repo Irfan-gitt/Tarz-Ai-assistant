@@ -1,23 +1,11 @@
-import os
 import subprocess
 import time
 import pyautogui
-from dotenv import load_dotenv
-
-from langchain_groq import ChatGroq
-from langchain_core.prompts import PromptTemplate
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import TOOL_CALLING_LLMS
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool
-from langchain.agents import create_react_agent, AgentExecutor
 
-load_dotenv()
-
-# ---------------- LLM ---------------- #
-
-llm = ChatGroq(
-    api_key=os.getenv("groq_api"),
-    model="llama-3.3-70b-versatile",
-    temperature=0
-)
 
 # ---------------- TOOLS (NEW STYLE) ---------------- #
 
@@ -59,53 +47,26 @@ def search_and_play(song: str) -> str:
 
 tools = [open_spotify, search_and_play]
 
-# ---------------- PROMPT ---------------- #
-
-prompt = PromptTemplate.from_template("""
-You are an AI assistant that controls a computer.
-
-Available tools:
-{tools}
-
-Tool names:
-{tool_names}
-
-RULES:
-- If user asks to open spotify → use open_spotify
-- If user asks to play a song → use search_and_play
-- Extract song name properly
-
-Use this format:
-
-Question: {input}
-Thought: think
-Action: tool name
-Action Input: input
-Observation: result
-Final Answer: response to user
-
-{agent_scratchpad}
-""")
-
-# ---------------- AGENT ---------------- #
-
-agent = create_react_agent(llm, tools, prompt)
-
-agent_executor = AgentExecutor(
-    agent=agent,
-    tools=tools,
-    verbose=True
-)
-
-# ---------------- MAIN ---------------- #
-
-
 def main():
     while True:
         user = input("You: ")
-        result = agent_executor.invoke({"input": user})
-        print("Agent:", result["output"])
-
+        messages = [HumanMessage(content=user)]
+        try:
+            for _ in range(8):
+                response = get_gateway().invoke(
+                    TOOL_CALLING_LLMS, messages, tools=tools)
+                messages.append(response)
+                if not response.tool_calls:
+                    print("Agent:", response.content)
+                    break
+                for call in response.tool_calls:
+                    tool_fn = next((item for item in tools
+                                    if item.name == call["name"]), None)
+                    result = tool_fn.invoke(call["args"]) if tool_fn else "Unknown tool"
+                    messages.append(ToolMessage(
+                        content=str(result), tool_call_id=call["id"]))
+        except AllModelsFailed as e:
+            print(f"Agent: Model calls failed: {e}")
 
 if __name__ == "__main__":
     main()

@@ -19,9 +19,9 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
-from dotenv import load_dotenv
 from langsmith import traceable
-from langchain_groq import ChatGroq
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import TOOL_CALLING_LLMS, CLASSIFY_LLMS, PLAIN_LLMS
 from Prompts.prompt import SYSTEM, SUPERVISOR_PROMPT
 from Vison.vision import vision_verify_system
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
@@ -42,19 +42,14 @@ from pydantic import BaseModel, Field
 from Audio.stt import live_listen
 from Audio.wake_word import wait_for_wake_word, play_done_chime, wake_hotkey_event
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from Tools.cancel_state import cancel_event, TaskCancelled, check_cancel
-from langchain_openrouter import ChatOpenRouter
 from Audio.tts import speak
 from Audio.orb_overlay import get_orb
 print("[Init] 3 - rag...")
-load_dotenv()
+
 
 os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "false")
 os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "false")
-
-api_key_g = os.getenv("GROQ_API_KEY")
-api_cb = os.getenv("CEREBRAS_API_KEY")
 
 
 ALL_TOOLS = [
@@ -72,9 +67,6 @@ ALL_TOOLS = [
 ]
 
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY2")
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
-
 print("[Init] Setting up LLMs...")
 
 
@@ -82,48 +74,6 @@ def listen():
     return live_listen()
     # return input("You
     # :")
-
-
-TOOL_LLMS = [
-    ChatGroq(api_key=api_key_g, temperature=0, model="openai/gpt-oss-120b"),
-    ChatGroq(api_key=api_key_g, temperature=0, model="qwen/qwen3.6-27b"),
-    ChatGoogleGenerativeAI(
-        model="gemini-3.7-flash",
-        google_api_key=os.getenv("GEMINI_KEY_5"),
-        temperature=0.2,
-    ),
-    ChatOpenRouter(model="openrouter/free", temperature=0,
-                   api_key=OPENROUTER_API_KEY),
-
-
-]
-
-CLASSIFY_LLMS = [
-    ChatGroq(api_key=api_key_g, temperature=0, model="openai/gpt-oss-120b"),
-    ChatGroq(api_key=api_key_g, temperature=0, model="qwen/qwen3.6-27b"),
-    ChatGoogleGenerativeAI(
-        model="gemini-3.7-flash",
-        google_api_key=os.getenv("GEMINI_KEY_5"),
-        temperature=0,
-    ),
-    ChatOpenRouter(model="openrouter/free", temperature=0,
-                   api_key=OPENROUTER_API_KEY),
-
-
-]
-
-CHAT_LLMS = [
-    ChatGroq(api_key=api_key_g, temperature=0.6, model="openai/gpt-oss-120b"),
-    ChatGoogleGenerativeAI(
-        model="gemini-3.7-flash",
-        google_api_key=os.getenv("GEMINI_KEY_5"),
-        temperature=0.6,
-    ),
-
-    ChatOpenRouter(model="openrouter/free", temperature=0.6,
-                   api_key=OPENROUTER_API_KEY),
-
-]
 
 
 class TarzState(TypedDict):
@@ -254,11 +204,10 @@ def supervisor(state: TarzState) -> dict:
     recent_text = "\n".join(m.content for m in sanitize_for_plain_llm(recent))
 
     next_step, instruction = "finished", ""
-    for llm in CLASSIFY_LLMS:
-        try:
-            decision = llm.with_structured_output(SupervisorDecision).invoke([
-                SystemMessage(content=SUPERVISOR_PROMPT),
-                HumanMessage(content=f"""
+    try:
+        decision = get_gateway().invoke(CLASSIFY_LLMS, [
+            SystemMessage(content=SUPERVISOR_PROMPT),
+            HumanMessage(content=f"""
 USER GOAL:
 {user_request}
 
@@ -276,18 +225,15 @@ CURRENT STEP:
 
 Decide what TARZ should do next.
 """)
-            ])
-            next_step = decision.next
-            instruction = decision.instruction
-            print("\n🧠 SUPERVISOR:")
-            print("Reason:", decision.reasoning)
-            print("Instruction:", instruction)
-            print("Next:", next_step)
-            break
-        except Exception as e:
-            print(f"[supervisor] {type(llm).__name__} failed: {e}")
-        next_step = "finished"
-        instruction = ""
+        ], schema=SupervisorDecision)
+        next_step = decision.next
+        instruction = decision.instruction
+        print("\n🧠 SUPERVISOR:")
+        print("Reason:", decision.reasoning)
+        print("Instruction:", instruction)
+        print("Next:", next_step)
+    except AllModelsFailed as e:
+        print(f"[supervisor] classification failed: {e}")
 
     return {
         "next": next_step,
@@ -310,17 +256,12 @@ def route_from_worker(state: TarzState) -> str:
     return "tools"
 
 
-current_llm_idx = 0
-
-
 def make_worker(tools):
     bound = tools + [done]
 
     def worker(state: TarzState) -> dict:
-        global current_llm_idx
         check_cancel()
         wsteps = state.get("worker_steps", 0)
-        failures = []
 
         # History windowing — older turns sanitized to plain text (safe
         # against cross-category tool-call mismatches), last 4 kept raw
@@ -343,24 +284,12 @@ Important:
 - If the supervisor provided a specific next strategy, prioritize it.
 """))
 
-        for _ in range(len(TOOL_LLMS)):
-            try:
-                llm = TOOL_LLMS[current_llm_idx].bind_tools(bound)
-                response = llm.invoke(messages)
-                return {"messages": [response], "worker_steps": wsteps + 1}
-            except Exception as e:
-                provider = type(TOOL_LLMS[current_llm_idx]).__name__
-                err = str(e).lower()
-                failures.append(f"{provider}: {str(e)[:300]}")
-                if any(x in err for x in (
-                    "429", "rate", "402", "payment", "quota",
-                    "tools should have a name", "harmonyerror",
-                )):
-                    current_llm_idx = (current_llm_idx + 1) % len(TOOL_LLMS)
-                    continue
-                raise RuntimeError(f"{provider} tool model failed: {e}") from e
-        raise RuntimeError(
-            "All tool models unavailable: " + " | ".join(failures))
+        try:
+            response = get_gateway().invoke(TOOL_CALLING_LLMS, messages, tools=bound)
+            return {"messages": [response], "worker_steps": wsteps + 1}
+        except AllModelsFailed as e:
+            print(f"[agent] {e}")
+            return {"messages": [AIMessage(content="I'm having trouble reaching my language models right now.")], "worker_steps": wsteps + 1}
 
     return worker
 
@@ -441,19 +370,16 @@ Relevant memories:
     except Exception as e:
         print(
             f"[think] graph execution failed, falling back to plain chat: {e}")
-        response = None
-        for llm in CHAT_LLMS:
-            try:
-                fallback = llm.invoke(
-                    [SystemMessage(content=SYSTEM), HumanMessage(content=user_input)])
-                text = extract_text(fallback.content)
-                if text:
-                    response = text
-                    break
-                print(
-                    f"[think] {type(llm).__name__} fallback returned empty response, trying next...")
-            except Exception as e2:
-                print(f"[think] {type(llm).__name__} fallback failed: {e2}")
+        try:
+            fallback = get_gateway().invoke(
+                PLAIN_LLMS,
+                [SystemMessage(content=SYSTEM),
+                 HumanMessage(content=user_input)],
+            )
+            response = extract_text(fallback.content)
+        except AllModelsFailed as e2:
+            print(f"[think] plain chat fallback failed: {e2}")
+            response = None
         if not response:
             response = "Something broke on my end — mind trying that again?"
 

@@ -1,10 +1,7 @@
 import requests
-import os
-from dotenv import load_dotenv
+from Main.config import OPENWEATHER_ALL_KEYS
 
-load_dotenv()
-
-OWM_KEY = os.getenv("OPENWEATHER_KEY")
+OWM_KEY = OPENWEATHER_ALL_KEYS[0] if OPENWEATHER_ALL_KEYS else None
 
 
 def get_weather(city: str) -> str:

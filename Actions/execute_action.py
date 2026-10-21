@@ -8,16 +8,11 @@ print("os")  # noqa
 import os  # noqa
 print("duck")  # noqa
 from duckduckgo_search import DDGS  # noqa
-print("chatgroq")  # noqa
-from langchain_groq import ChatGroq  # noqa
 print("dot")  # noqa
-from dotenv import load_dotenv  # noqa
 print("pil")  # noqa
 from PIL import Image  # noqa
 import time  # noqa
-from groq import Groq  # noqa
 import base64  # noqa
-from openai import OpenAI  # noqa
 print("[Actions] 1 - pyautogui...")  # noqa
 import pyautogui  # noqa
 import time  # noqa
@@ -50,11 +45,6 @@ from langchain_core.tools import tool  # noqa
 
 
 print("[Actions] All imports done ✓")  # noqa
-load_dotenv()
-
-api_key = os.getenv("groq_api")
-llm = ChatGroq(api_key=api_key, temperature=0.7,
-               model="llama-3.3-70b-versatile")
 
 
 @tool

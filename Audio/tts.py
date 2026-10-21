@@ -1,5 +1,3 @@
-import random
-import os
 import io
 import re
 import sounddevice as sd
@@ -7,16 +5,8 @@ import soundfile as sf
 import pyaudio
 from groq import Groq
 from cartesia import Cartesia
-from dotenv import load_dotenv
-
-load_dotenv()
-
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-cartesia_client = Cartesia(api_key=os.getenv("CARTESIA_API_KEY"))
-
-GROQ_MODEL = "canopylabs/orpheus-v1-english"
-GROQ_VOICE = "troy"
-CARTESIA_VOICE_ID = "86e30c1d-714b-4074-a1f2-1cb6b552fb49"
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import TTS_MODELS
 
 _MARKDOWN_STRIP = re.compile(r'[*_`#]')
 _URL_STRIP = re.compile(r'https?://\S+')
@@ -28,24 +18,26 @@ def _clean_for_speech(text: str) -> str:
     return text.strip()
 
 
-def _speak_groq(text: str):
+def _speak_groq(text: str, cfg: dict, key: str):
+    groq_client = Groq(api_key=key)
     response = groq_client.audio.speech.create(
-        model=GROQ_MODEL, voice=GROQ_VOICE, input=text, response_format="wav",
+        model=cfg["model"], voice=cfg["voice"], input=text, response_format="wav",
     )
     data, samplerate = sf.read(io.BytesIO(response.read()))
     sd.play(data, samplerate)
     sd.wait()
 
 
-def _speak_cartesia(text: str):
+def _speak_cartesia(text: str, cfg: dict, key: str):
+    cartesia_client = Cartesia(api_key=key)
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paFloat32,
                     channels=1, rate=44100, output=True)
     try:
         with cartesia_client.tts.websocket_connect() as connection:
             ctx = connection.context(
-                model_id="sonic-3",
-                voice={"mode": "id", "id": CARTESIA_VOICE_ID,
+                model_id=cfg["model"],
+                voice={"mode": "id", "id": cfg["voice"],
                        "speed": 0.65, "pitch": 1.0},
                 output_format={"container": "raw",
                                "encoding": "pcm_f32le", "sample_rate": 44100},
@@ -66,12 +58,12 @@ def speak(text: str):
     text = _clean_for_speech(text)
     if not text:
         return
-    try:
-        _speak_groq(text)
-    except Exception as e:
-        print(f"[TTS] Groq failed ({e}), falling back to Cartesia")
-        try:
+    def call(name, cfg, key):
+        if name == "tts_groq":
+            return _speak_groq(text, cfg, key)
+        return _speak_cartesia(text, cfg, key)
 
-            _speak_cartesia(text)
-        except Exception as e2:
-            print(f"[TTS] Cartesia also failed: {e2}")
+    try:
+        get_gateway().run(TTS_MODELS, call)
+    except AllModelsFailed as e:
+        print(f"[TTS] All speech models failed: {e}")

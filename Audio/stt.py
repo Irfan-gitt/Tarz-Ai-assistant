@@ -1,34 +1,14 @@
 # Audio/stt.py
 import numpy as np
 from Audio.orb_overlay import get_orb
-import os
 import asyncio
 import sounddevice as sd
 from google import genai
 from google.genai import types
 from cartesia import AsyncCartesia
-from dotenv import load_dotenv
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import STT_MODELS
 from Audio.wake_word import get_best_input_device, play_wake_beep
-load_dotenv()
-
-GEMINI_KEYS = [
-    os.getenv("GEMINI_KEY_2"),
-    os.getenv("GEMINI_KEY_2"),
-    os.getenv("GEMINI_KEY_3"),
-    os.getenv("GEMINI_KEY_4"),
-]
-GEMINI_KEYS = [k for k in GEMINI_KEYS if k]
-
-if not GEMINI_KEYS:
-    raise RuntimeError("No GEMINI_KEY_* environment variables found")
-
-current_key_idx = 0
-
-
-MODEL = "gemini-3.5-transcribe-live"
-
-CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY")
-CARTESIA_MODEL = "ink-2"
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -56,30 +36,23 @@ async def _wait_for_final_or_silence(
     return True
 
 
-def _get_client():
-    return genai.Client(api_key=GEMINI_KEYS[current_key_idx])
+def _get_client(key):
+    return genai.Client(api_key=key)
 
 
-async def _stream_one_utterance(timeout: float | None = None) -> str:
+async def _stream_one_utterance(timeout: float | None, cfg: dict, key: str) -> str:
     """
-    Connects, streams mic audio, returns the first FINAL transcript
-    (one complete user utterance = one turn). Rotates across GEMINI_KEYS
-    on auth/expiry/quota failures, retrying the connection with the next key.
+    Connects and streams microphone audio through one configured model.
     """
-    global current_key_idx
-
     config = types.LiveConnectConfig(
         response_modalities=["TEXT"],
         input_audio_transcription=types.AudioTranscriptionConfig(),
     )
 
-    last_error = None
-
-    for attempt in range(len(GEMINI_KEYS)):
-        client = _get_client()
-        try:
-            async with client.aio.live.connect(model=MODEL, config=config) as session:
-                print(f"🟢 Gemini Live connected (key #{current_key_idx + 1})")
+    client = _get_client(key)
+    try:
+        async with client.aio.live.connect(model=cfg["model"], config=config) as session:
+                print("Gemini Live connected")
                 result = {"text": None}
                 loop = asyncio.get_running_loop()
                 last_speech = {"at": loop.time()}
@@ -159,28 +132,17 @@ async def _stream_one_utterance(timeout: float | None = None) -> str:
 
                 return result["text"] or ""
 
-        except Exception as e:
-            err = str(e).lower()
-            last_error = e
-            if any(x in err for x in ("401", "403", "429", "quota", "expired", "invalid", "permission")):
-                print(
-                    f"[STT] Key #{current_key_idx + 1} failed ({e}), rotating...")
-            else:
-                print(
-                    f"[STT] Unexpected error on key #{current_key_idx + 1} ({e}), rotating...")
-            current_key_idx = (current_key_idx + 1) % len(GEMINI_KEYS)
-            continue
-
-    raise RuntimeError(f"All Gemini keys failed for live STT: {last_error}")
+    except Exception:
+        raise
 
 
-async def _stream_one_utterance_cartesia(timeout: float | None = None) -> str:
-    client = AsyncCartesia(api_key=CARTESIA_API_KEY)
+async def _stream_one_utterance_cartesia(timeout: float | None, cfg: dict, key: str) -> str:
+    client = AsyncCartesia(api_key=key)
     result = {"text": None}
 
     try:
         async with client.stt.auto_finalize.websocket(
-            model=CARTESIA_MODEL,
+            model=cfg["model"],
             language="en",
             encoding="pcm_s16le",
             sample_rate=SAMPLE_RATE,
@@ -265,8 +227,13 @@ def live_listen(timeout: float | None = None) -> str:
     """Drop-in sync replacement for input('You:') — blocks until one spoken
     utterance is transcribed (or timeout elapses, returning ''). Tries Gemini
     first (rotating keys), falls back to Cartesia Ink-2 if every Gemini key fails."""
+    def call(name, cfg, key):
+        if name == "stt_gemini":
+            return asyncio.run(_stream_one_utterance(timeout, cfg, key))
+        return asyncio.run(_stream_one_utterance_cartesia(timeout, cfg, key))
+
     try:
-        return asyncio.run(_stream_one_utterance(timeout=timeout))
-    except RuntimeError as e:
-        print(f"[STT] Gemini exhausted ({e}), falling back to Cartesia")
-        return asyncio.run(_stream_one_utterance_cartesia(timeout=timeout))
+        return get_gateway().run(STT_MODELS, call)
+    except AllModelsFailed as e:
+        print(f"[STT] All speech recognition models failed: {e}")
+        return ""

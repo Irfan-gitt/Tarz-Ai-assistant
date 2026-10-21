@@ -19,7 +19,8 @@ def _keys(*names):
 
 # --- API keys: every provider exposes ALL its keys, the gateway picks one ---
 GROQ_ALL_KEYS = _keys("GROQ_API_KEY_1", "GROQ_API_KEY_2", "GROQ_API_KEY_3")
-GROQ_VISION_ALL_KEYS = _keys("GROQ_VISION_KEY_1", "GROQ_VISION_KEY_2")
+GROQ_VISION_ALL_KEYS = _keys(
+    "GROQ_VISION_KEY_1", "GROQ_VISION_KEY_2")
 GEMINI_ALL_KEYS = _keys("GEMINI_KEY_1", "GEMINI_KEY_2",
                         "GEMINI_KEY_3", "GEMINI_KEY_4", "GEMINI_KEY_5")
 OPENROUTER_ALL_KEYS = _keys("OPENROUTER_API_KEY", "OPENROUTER_API_KEY2")
@@ -60,6 +61,8 @@ MODEL_CONFIGS = {
     "plain_groq_qwen": {"provider": "groq", "model": "qwen/qwen3.8-27b", "temperature": 0.6, **_FAST},
     "plain_gemini": {"provider": "google", "model": "gemini-3.7-flash", "temperature": 0.6, **_FAST},
     "plain_openrouter": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.6, **_NO_RETRY},
+    "plain_action": {"provider": "groq", "model": "llama-3.3-70b-versatile", "temperature": 0.7, **_FAST},
+    "plain_news": {"provider": "groq", "model": "llama-3.3-70b-versatile", "temperature": 0.4, **_FAST},
 
     "vision_groq": {"provider": "groq_vision", "model": "qwen/qwen3.8-27b"},
     "vision_openrouter": {
@@ -72,6 +75,7 @@ MODEL_CONFIGS = {
     "moondream": {"provider": "moondream"},
 
     "stt_gemini": {"provider": "google", "model": "gemini-3.5-transcribe-live"},
+    "grid_gemini": {"provider": "google", "model": "gemini-2.5-flash"},
     "stt_cartesia": {"provider": "cartesia", "model": "ink-2"},
     "tts_groq": {"provider": "groq", "model": "canopylabs/orpheus-v1-english", "voice": "troy"},
     "tts_cartesia": {
@@ -92,6 +96,7 @@ PLAIN_LLMS = ["plain_groq", "plain_groq_qwen",
 VISION_LLMS = ["vision_groq", "vision_openrouter"]
 LOCATE_MODELS = ["moondream"]
 STT_MODELS = ["stt_gemini", "stt_cartesia"]
+GRID_MODELS = ["grid_gemini"]
 TTS_MODELS = ["tts_groq", "tts_cartesia"]
 
 

@@ -4,11 +4,12 @@ from langchain_core.tools import tool
 from Actions.execute_action import open_app
 
 import time
-import os
 import pyautogui
 from PIL import Image
 from dotenv import load_dotenv
 import moondream as md
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import LOCATE_MODELS
 load_dotenv()
 
 
@@ -16,8 +17,14 @@ def _click_at(target: str) -> dict:
     pyautogui.screenshot().save("grid_screen.png")
     image = Image.open("grid_screen.png")
 
-    model = md.vl(api_key=os.getenv("MOONDREAM_API_KEY"))
-    result = model.point(image, target)
+    try:
+        result = get_gateway().run(
+            LOCATE_MODELS,
+            lambda name, cfg, key: md.vl(api_key=key).point(image, target),
+        )
+    except AllModelsFailed as e:
+        print(f"[Moondream] Locate failed: {e}")
+        return {"found": False}
 
     if not result.get("points"):
         print(f"'{target}' not found")

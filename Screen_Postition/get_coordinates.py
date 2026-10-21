@@ -2,6 +2,8 @@ import time
 import moondream as md
 from PIL import Image
 import os
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import LOCATE_MODELS
 from Screen_Postition.grid_finder import click as grid_click
 from dotenv import load_dotenv
 import easyocr
@@ -68,10 +70,15 @@ def find_and_click(target):
     pyautogui.screenshot().save("grid_screen.png")
     image = Image.open("grid_screen.png")
 
-    model = md.vl(api_key=os.getenv("MOONDREAM_API_KEY"))
-
     target = target
-    result = model.point(image, target)
+    try:
+        result = get_gateway().run(
+            LOCATE_MODELS,
+            lambda name, cfg, key: md.vl(api_key=key).point(image, target),
+        )
+    except AllModelsFailed as e:
+        print(f"[Moondream] Locate failed: {e}")
+        return {"found": False}
 
     if result.get("points"):
         point = result["points"][0]

@@ -6,11 +6,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import time
 import os
 from datetime import datetime
-from dotenv import load_dotenv
-from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
-from langchain_cerebras import ChatCerebras
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import TOOL_CALLING_LLMS, CLASSIFY_LLMS, PLAIN_LLMS
 from Prompts.prompt import SYSTEM
 from Vison.vision import describe_screen
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -26,12 +23,6 @@ from Tools.memory import save_task, retrieve_similar_task, retrieve_similar_chat
 from Actions.execute_action import click
 print("[Init] 3 - rag...")
 
-load_dotenv()
-
-
-api_key = os.getenv("groq_api")
-api_or = os.getenv("OPENROUTER_KEY")
-api_cb = os.getenv("CEREBRAS_API_KEY")
 
 
 TOOLS = [click, type_text, press_key, open_app,
@@ -80,29 +71,6 @@ def should_use_tool_router(user_input: str) -> bool:
 
 
 print("[Init] Setting up LLMs...")
-llm_tools = ChatCerebras(
-    model="gpt-oss-120b",
-    api_key=api_cb,
-    temperature=0.2
-).bind_tools(TOOLS)
-try:
-    llm_plain = ChatGroq(
-        api_key=os.getenv("groq_api"),
-        temperature=0.7,
-        model="llama-3.3-70b-versatile"
-    )
-
-except Exception as e:
-    print(f"An error occurred while setting up LLMs: {e}")
-    llm_plain = ChatGroq(
-        api_key=os.getenv("groq_api"),
-        temperature=0.7,
-        model="llama-3.3-70b-versatile"
-    )
-
-
-api_openai = os.getenv("GITHUB_TOKEN")
-
 
 def listen():
     user_input = input("You:")
@@ -118,8 +86,9 @@ def is_computer_task(user_input: str) -> bool:
         return False
     if should_use_tool_router(user_input):
         return True
-    response = llm_plain.invoke([
-        SystemMessage("""Reply only YES or NO.
+    try:
+        response = get_gateway().invoke(CLASSIFY_LLMS, [
+            SystemMessage("""Reply only YES or NO.
 
 Should this use computer control tools?
 YES for: opening apps, clicking, typing, searching web, playing music, news lookup, real-time facts, today's date/time, calendar tasks, Gmail/email reading or sending, volume, any task on computer
@@ -127,7 +96,10 @@ NO for: pure conversation, jokes, math, general knowledge questions with no acti
 
 Be generous with YES - when in doubt say YES."""),
         HumanMessage(user_input)
-    ])
+        ])
+    except AllModelsFailed as e:
+        print(f"[Router] Classification failed: {e}")
+        return False
     return "YES" in response.content.upper()
 
 
@@ -144,40 +116,6 @@ print("[Init] Building conversation history...")
 conversation_history = [
     SystemMessage(content=SYSTEM_PROMPT)
 ] + build_conversation_history()
-
-TOOL_LLMS = [
-
-    ChatOpenAI(
-        base_url="https://models.inference.ai.azure.com",
-        api_key=api_openai,
-        model="gpt-4o-mini"
-    ),
-
-    ChatCerebras(
-        model="gpt-oss-120b",
-        api_key=os.getenv("CEREBRAS_API_KEY"),
-        temperature=0.2
-    ),
-
-
-
-
-    ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        google_api_key=os.getenv("GEMINI_KEY_5"),
-        temperature=0.2
-    ),
-]
-
-
-current_llm_idx = 0
-
-
-def get_llm_tools():
-    global current_llm_idx  # 🙂
-    llm = TOOL_LLMS[current_llm_idx]
-    return llm.bind_tools(TOOLS)
-
 
 _pending_messages = None
 
@@ -260,8 +198,12 @@ Use this when user asks what you did, what tasks were completed, or you can use 
                                                 )
 
         conversation_history.append({"role": "user", "content": user_input})
-        response = clean_assistant_text(
-            llm_plain.invoke(conversation_history).content)
+        try:
+            response = clean_assistant_text(
+                get_gateway().invoke(PLAIN_LLMS, conversation_history).content)
+        except AllModelsFailed as e:
+            print(f"[Chat] All models failed: {e}")
+            response = "I can't answer right now."
         conversation_history.append({"role": "assistant", "content": response})
         save_conversation(user_input, response)
         auto_extract_memories(user_input, response)
@@ -270,23 +212,13 @@ Use this when user asks what you did, what tasks were completed, or you can use 
     completed_steps = []
     last_result = ""
 
-    global current_llm_idx
-
     for step in range(15):
-        for attempt in range(len(TOOL_LLMS)):
-            try:
-                llm = get_llm_tools()
-                response = llm.invoke(messages)
-                break
-            except Exception as e:
-                if "429" in str(e) or "rate" in str(e).lower():
-                    current_llm_idx = (current_llm_idx + 1) % len(TOOL_LLMS)
-                    print(
-                        f"[Rate limit] Switching to model {current_llm_idx + 1}")
-                    time.sleep(1)
-                    continue
-                print(f"[LLM Error] {e}")
-                break
+        try:
+            response = get_gateway().invoke(
+                TOOL_CALLING_LLMS, messages, tools=TOOLS)
+        except AllModelsFailed as e:
+            print(f"[LLM Error] {e}")
+            return "I can’t complete that right now."
 
         messages.append(response)
 

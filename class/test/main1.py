@@ -1,12 +1,11 @@
-import os
 import pyttsx3
 from duckduckgo_search import DDGS
 import speech_recognition as sr
-from langchain_groq import ChatGroq
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import PLAIN_LLMS
 from faster_whisper import WhisperModel
 import sounddevice as sd
 import numpy as np
-from dotenv import load_dotenv
 import pygame
 import webbrowser
 
@@ -17,26 +16,13 @@ from PIL import Image
 import time
 
 from langchain_community.tools import DuckDuckGoSearchRun
-from elevenlabs.client import ElevenLabs
-load_dotenv()
 
 # listen
 
 recognition = sr.Recognizer()
 
-# TTS - engine setup
-elevenlabs = ElevenLabs(
-    api_key="sk_9b01908fcd2bc15b4d46764c1e65ea878db6d475fd43ee88")
-
-
 # LLM - setup
 
-api_key = os.getenv("groq_api")
-
-llm = ChatGroq(api_key=api_key,
-               temperature=0.7,
-               model="llama-3.3-70b-versatile"
-               )
 
 model = WhisperModel(
     "large-v3-turbo",
@@ -66,9 +52,11 @@ def listen(duration=6, fs=16000):
 
 
 def think(user):
-    respose = llm.invoke(user)
-
-    return respose.content
+    try:
+        return get_gateway().invoke(PLAIN_LLMS, [user]).content
+    except AllModelsFailed as e:
+        print(f"[LLM] All models failed: {e}")
+        return "I can't answer right now."
 
 
 def main():

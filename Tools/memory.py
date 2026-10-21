@@ -2,7 +2,8 @@
 import uuid
 from dotenv import load_dotenv
 import json
-from langchain_groq import ChatGroq
+from Main.llm_gateway import get_gateway, AllModelsFailed
+from Main.config import CLASSIFY_LLMS
 import chromadb
 
 from datetime import datetime
@@ -15,12 +16,6 @@ context_collection = client.get_or_create_collection("context_memory")
 
 
 load_dotenv()
-llm = ChatGroq(
-
-    temperature=0,
-    model="openai/gpt-oss-120b")
-
-
 def context_agent(user_input, ai_reply):
     PROMPT = f"""Extract memory-worthy information from this exchange. Return ONLY valid JSON, nothing else.
 
@@ -40,7 +35,7 @@ def context_agent(user_input, ai_reply):
     Return exactly this JSON shape:
     {{"preference": "", "tool_result": "", "long_term": ""}}
     """
-    response = llm.invoke(PROMPT)
+    response = get_gateway().invoke(CLASSIFY_LLMS, PROMPT)
     return json.loads(response.content)
 
 
@@ -67,9 +62,12 @@ def save_imp_context(user_input: str, ai_reply: str):
     try:
         ctx = context_agent(user_input, ai_reply)
         return save_context(ctx, user_input)
-    except Exception as e:
+    except AllModelsFailed as e:
         # Memory extraction is best-effort and must not leave an unhandled
         # exception when the shared LLM provider is temporarily rate-limited.
+        print(f"[memory] Skipped saving context: {type(e).__name__}: {e}")
+        return []
+    except Exception as e:
         print(f"[memory] Skipped saving context: {type(e).__name__}: {e}")
         return []
 

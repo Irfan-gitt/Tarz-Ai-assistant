@@ -2,11 +2,10 @@
 # Windows-only standard-library modules (winreg and winsound) need no entry.
 
 # AI orchestration and providers
-langchain-cerebras>=0.1.0
 langchain-core>=0.3.0
+langchain-cerebras>=0.1.0
 langchain-google-genai>=4.0.0
 langchain-groq>=0.2.0
-langchain-openai>=0.2.0
 langchain-openrouter>=0.2.0
 langgraph>=1.0.0
 langsmith>=0.3.0

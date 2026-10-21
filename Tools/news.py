@@ -1,19 +1,13 @@
 from ddgs import DDGS
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
-import os
-from langchain_groq import ChatGroq
-import os
+from Main.llm_gateway import get_gateway
+from Main.config import PLAIN_LLMS
 import webbrowser
 
 from dotenv import load_dotenv
 load_dotenv()
 
 
-llm = ChatGroq(
-    api_key=os.getenv("groq_api"),
-    model="llama-3.3-70b-versatile"
-)
 
 
 def search_news(query: str) -> str:
@@ -48,13 +42,13 @@ def search_news(query: str) -> str:
 
         context = "\n".join([f"- {r['title']}: {r['body']}" for r in results])
 
-        summary = llm.invoke(f"""
+        summary = get_gateway().invoke(PLAIN_LLMS, [f"""
 Summarize these news articles in 3-4 sentences.
 Be factual, clear and concise.
 
 Articles:
 {context}
-""").content
+"""]).content
 
         output += "=" * 50 + "\n"
         output += f"📋 Here is the summary Boss:\n{summary}\n"
