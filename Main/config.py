@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openrouter import ChatOpenRouter
+from typesafe_sdk import Choice, TypeSafeClient
 
 load_dotenv()
 
@@ -25,6 +26,7 @@ GEMINI_ALL_KEYS = _keys("GEMINI_KEY_1", "GEMINI_KEY_2",
                         "GEMINI_KEY_3", "GEMINI_KEY_4", "GEMINI_KEY_5")
 OPENROUTER_ALL_KEYS = _keys("OPENROUTER_API_KEY", "OPENROUTER_API_KEY2")
 MOONDREAM_ALL_KEYS = _keys("MOONDREAM_API_KEY")
+JEV_ALL_KEYS = _keys("OPENROUTER_API_KEY", "OPENROUTER_API_KEY2")
 CARTESIA_ALL_KEYS = _keys("CARTESIA_API_KEY")
 TAVILY_ALL_KEYS = _keys("TAVILY_API_KEY")
 OPENWEATHER_ALL_KEYS = _keys("OPENWEATHER_KEY")
@@ -105,6 +107,13 @@ LOCAL_MODELS = {
     "wake_whisper": {"model": "small", "device": "cpu", "compute_type": "int8"},
     "reranker": {"model": "cross-encoder/ms-marco-MiniLM-L-6-v2"},
 }
+
+# JEV
+
+jev_client = TypeSafeClient(
+    api_key=JEV_ALL_KEYS[0] if JEV_ALL_KEYS else None,
+    base_url="https://openrouter.ai/api",
+)
 
 
 def make_llm(name, api_key):
