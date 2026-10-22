@@ -10,6 +10,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openrouter import ChatOpenRouter
 from typesafe_sdk import Choice, TypeSafeClient
+from langchain_community.embeddings import JinaEmbeddings
 
 load_dotenv()
 
@@ -30,6 +31,7 @@ JEV_ALL_KEYS = _keys("OPENROUTER_API_KEY", "OPENROUTER_API_KEY2")
 CARTESIA_ALL_KEYS = _keys("CARTESIA_API_KEY")
 TAVILY_ALL_KEYS = _keys("TAVILY_API_KEY")
 OPENWEATHER_ALL_KEYS = _keys("OPENWEATHER_KEY")
+JINA_ALL_KEYS = _keys("JINA_API_KEY")
 
 API_KEYS = {
     "groq": GROQ_ALL_KEYS,
@@ -40,6 +42,7 @@ API_KEYS = {
     "cartesia": CARTESIA_ALL_KEYS,
     "tavily": TAVILY_ALL_KEYS,
     "openweather": OPENWEATHER_ALL_KEYS,
+    "jina": JINA_ALL_KEYS,
 }
 
 
@@ -85,6 +88,7 @@ MODEL_CONFIGS = {
         "model": "sonic-3",
         "voice": "86e30c1d-714b-4074-a1f2-1cb6b552fb49",
     },
+    "jina": {"provider": "jina", "model": "jina-embeddings-v4", "base_url": "https://api.jina.ai/v1/embeddings"},
 }
 
 
@@ -100,6 +104,7 @@ LOCATE_MODELS = ["moondream"]
 STT_MODELS = ["stt_gemini", "stt_cartesia"]
 GRID_MODELS = ["grid_gemini"]
 TTS_MODELS = ["tts_groq", "tts_cartesia"]
+EMBEDDING_MODELS = ["jina"]
 
 
 # --- Local models (run on your PC, no API key) ---
@@ -128,5 +133,7 @@ def make_llm(name, api_key):
         return ChatGoogleGenerativeAI(google_api_key=api_key, **kwargs)
     if provider == "openrouter":
         return ChatOpenRouter(api_key=api_key, **kwargs)
+    if provider == "jina":
+        return JinaEmbeddings(api_key=api_key, **kwargs)
     raise ValueError(
         f"'{name}' ({provider}) is not a LangChain chat model; use gateway.run()")
