@@ -1,3 +1,4 @@
+from config_settings. guardrails import Guardrails, jev_ask, restore
 import keyboard
 import winreg
 import threading
@@ -84,3 +85,33 @@ class TarzState(TypedDict):
 
 MAX_WORKER_STEPS = 6
 MAX_STEPS = 12
+
+
+guard = Guardrails(ask=jev_ask)
+
+
+class TarzState(TypedDict):
+    ...  # your existing keys
+    pii_map: dict[str, str]
+    blocked: bool
+    flagged: bool
+
+
+def guardrail_node(state: TarzState) -> dict:
+    last = next(m for m in reversed(
+        state["messages"]) if isinstance(m, HumanMessage))
+    r = guard.check(last.content, state.get("pii_map"))
+    out = {"pii_map": r.pii_map, "blocked": not r.allowed,
+           "flagged": r.verdict == "suspicious"}
+    if not r.allowed:
+        out["messages"] = [AIMessage(content=r.reply)]
+    elif r.text != last.content:
+        out["messages"] = [HumanMessage(content=r.text, id=last.id)]
+    return out
+
+
+def restore_args_node(state: TarzState) -> dict:
+    last = state["messages"][-1]
+    calls = [{**c, "args": restore(c["args"], state.get("pii_map", {}))}
+             for c in last.tool_calls]
+    return {"messages": [AIMessage(content=last.content, tool_calls=calls, id=last.id)]}
