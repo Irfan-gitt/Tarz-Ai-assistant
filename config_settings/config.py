@@ -110,10 +110,10 @@ LOCAL_MODELS = {
 
 # JEV
 
-jev_client = TypeSafeClient(
-    api_key=JEV_ALL_KEYS[0] if JEV_ALL_KEYS else None,
-    base_url="https://openrouter.ai/api",
-)
+API_KEYS["jev"] = JEV_ALL_KEYS
+MODEL_CONFIGS["jev_openrouter"] = {
+    "provider": "jev", "base_url": "https://openrouter.ai/api"}
+JEV_MODELS = ["jev_openrouter"]
 
 
 def make_llm(name, api_key):
