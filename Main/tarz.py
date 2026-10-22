@@ -20,8 +20,8 @@ if hasattr(sys.stderr, "reconfigure"):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 from langsmith import traceable
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import TOOL_CALLING_LLMS, CLASSIFY_LLMS, PLAIN_LLMS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import TOOL_CALLING_LLMS, CLASSIFY_LLMS, PLAIN_LLMS
 from Prompts.prompt import SYSTEM, SUPERVISOR_PROMPT
 from Vison.vision import vision_verify_system
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage

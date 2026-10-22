@@ -4,8 +4,8 @@ from PIL import Image
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 import moondream as md
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import LOCATE_MODELS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import LOCATE_MODELS
 from Actions.execute_action import open_app
 
 

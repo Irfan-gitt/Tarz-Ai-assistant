@@ -1,12 +1,10 @@
 from tavily import TavilyClient
 from ddgs import DDGS
 from langchain_core.tools import tool
-from Main.llm_gateway import get_gateway
-from Main.config import PLAIN_LLMS, TAVILY_ALL_KEYS
+from config_settings.llm_gateway import get_gateway
+from config_settings.config import PLAIN_LLMS, TAVILY_ALL_KEYS
 import re
 from datetime import datetime, timedelta, timezone
-
-
 
 
 def _local_date_time_answer(query: str) -> str | None:

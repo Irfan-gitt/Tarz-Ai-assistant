@@ -2,8 +2,8 @@
 import uuid
 from dotenv import load_dotenv
 import json
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import CLASSIFY_LLMS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import CLASSIFY_LLMS
 import chromadb
 
 from datetime import datetime
@@ -16,6 +16,8 @@ context_collection = client.get_or_create_collection("context_memory")
 
 
 load_dotenv()
+
+
 def context_agent(user_input, ai_reply):
     PROMPT = f"""Extract memory-worthy information from this exchange. Return ONLY valid JSON, nothing else.
 

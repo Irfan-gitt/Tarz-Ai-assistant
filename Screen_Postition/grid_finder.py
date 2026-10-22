@@ -11,8 +11,8 @@ import re
 import pyautogui
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import GRID_MODELS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import GRID_MODELS
 
 
 pyautogui.FAILSAFE = True

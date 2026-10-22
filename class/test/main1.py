@@ -1,8 +1,8 @@
 import pyttsx3
 from duckduckgo_search import DDGS
 import speech_recognition as sr
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import PLAIN_LLMS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config.config import PLAIN_LLMS
 from faster_whisper import WhisperModel
 import sounddevice as sd
 import numpy as np

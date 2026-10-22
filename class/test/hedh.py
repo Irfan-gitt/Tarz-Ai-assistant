@@ -1,8 +1,8 @@
 import subprocess
 import time
 import pyautogui
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import TOOL_CALLING_LLMS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import TOOL_CALLING_LLMS
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
@@ -47,6 +47,7 @@ def search_and_play(song: str) -> str:
 
 tools = [open_spotify, search_and_play]
 
+
 def main():
     while True:
         user = input("You: ")
@@ -62,11 +63,13 @@ def main():
                 for call in response.tool_calls:
                     tool_fn = next((item for item in tools
                                     if item.name == call["name"]), None)
-                    result = tool_fn.invoke(call["args"]) if tool_fn else "Unknown tool"
+                    result = tool_fn.invoke(
+                        call["args"]) if tool_fn else "Unknown tool"
                     messages.append(ToolMessage(
                         content=str(result), tool_call_id=call["id"]))
         except AllModelsFailed as e:
             print(f"Agent: Model calls failed: {e}")
+
 
 if __name__ == "__main__":
     main()

@@ -2,8 +2,8 @@ import time
 import moondream as md
 from PIL import Image
 import os
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import LOCATE_MODELS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import LOCATE_MODELS
 from Screen_Postition.grid_finder import click as grid_click
 from dotenv import load_dotenv
 import easyocr

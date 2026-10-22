@@ -1,4 +1,3 @@
-
 import keyboard
 import winreg
 import threading
@@ -20,8 +19,8 @@ if hasattr(sys.stderr, "reconfigure"):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 from langsmith import traceable
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import TOOL_CALLING_LLMS, CLASSIFY_LLMS, PLAIN_LLMS, jev_client, Choice
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import TOOL_CALLING_LLMS, CLASSIFY_LLMS, PLAIN_LLMS, jev_client, Choice
 from Prompts.prompt import SYSTEM, SUPERVISOR_PROMPT
 from Vison.vision import vision_verify_system
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
@@ -71,9 +70,8 @@ print("[Init] Setting up LLMs...")
 
 
 def listen():
-    return live_listen()
-    # return input("You
-    # :")
+    # return live_listen()
+    return input("You: ")
 
 
 class TarzState(TypedDict):
@@ -86,78 +84,3 @@ class TarzState(TypedDict):
 
 MAX_WORKER_STEPS = 6
 MAX_STEPS = 12
-
-
-def retrieval_category(question):
-    response = jev_client.system_one(
-        model="typesafe/jev-1.13",
-        state={"question": question},
-        questions={
-            "category": Choice(
-                instructions=(
-                    "Pick exactly one category. Decide in this order:\n"
-                    "1. If the question is about ONE named person's own record "
-                    "(employee ID, email, phone, full name) -> lookup_search.\n"
-                    "2. Else, if the question already uses the key words a company "
-                    "document would use for the topic (a policy name, system name, "
-                    "metric or term) and wants one fact from it -> specific_search.\n"
-                    "3. Else, if the question describes a situation, problem or goal in "
-                    "everyday words without naming the policy or system, or needs "
-                    "several sections combined -> summarize_search.\n"
-                    "If you are unsure between specific_search and summarize_search, "
-                    "choose summarize_search."
-                ),
-                criteria={
-                    "lookup_search": (
-                        "The question is about ONE named person's own record or contact "
-                        "details, identified by employee ID, email, phone number or full "
-                        "name, and asks a fact about that individual (salary, team, "
-                        "manager, joining date). It is NOT about a policy, process, "
-                        "system or company-wide fact. "
-                        "Examples: 'what is FINEMP1042's salary', "
-                        "'find isha.chowdhury@fintechco.com', 'who is Vihaan Desai', "
-                        "'what is Vihaan Desai's department'. "
-                        "NOT this: 'what is the leave policy' (no person), "
-                        "'why was my leave rejected' (no named person)."
-                    ),
-                    "specific_search": (
-                        "A DIRECT question that already uses the same key words the "
-                        "document would use (policy name, system name, metric, term) and "
-                        "wants one fact, number, date, list or definition. The answer "
-                        "sits in one section. "
-                        "Examples: 'what is the leave policy', 'what was Q1 2024 revenue', "
-                        "'when is the reimbursement deadline', 'what was last year's "
-                        "company turnover', 'what are the RTO and RPO for disaster "
-                        "recovery', 'which databases does FinSolve use', 'what is the "
-                        "minimum unit test coverage'. "
-                        "NOT this: a question that describes a situation or symptom "
-                        "instead of naming the topic."
-                    ),
-                    "summarize_search": (
-                        "An INDIRECT question: it describes a situation, problem, symptom "
-                        "or goal in everyday words and does NOT name the policy, process "
-                        "or system that answers it, so its words will not match the "
-                        "document. Often starts with why / how come / who checks / what "
-                        "happens if / how do we stop. Also use it for broad questions "
-                        "that need several sections combined (summarize, explain end to "
-                        "end, compare). Works for any department. "
-                        "Examples: 'why is my leave request getting rejected', 'why "
-                        "haven't I got my travel money back yet', 'our cloud bill keeps "
-                        "going up, who checks it', 'a test fails randomly then passes, "
-                        "what does the pipeline do', 'how do we stop old wrong data from "
-                        "being shown after a change', 'a customer is worried their card "
-                        "details could be stolen, what protects them', 'summarize our "
-                        "security measures'. "
-                        "Contrast: 'what is the cache invalidation policy' is "
-                        "specific_search, but 'how do we stop old wrong data being shown "
-                        "after a change' is summarize_search."
-                    ),
-                },
-            )
-        },
-    )
-
-    return response.answers["category"].choice
-
-
-print(retrieval_category("who is Vihaan Desai"))

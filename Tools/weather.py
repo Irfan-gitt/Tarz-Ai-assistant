@@ -1,5 +1,5 @@
 import requests
-from Main.config import OPENWEATHER_ALL_KEYS
+from config_settings.config import OPENWEATHER_ALL_KEYS
 
 OWM_KEY = OPENWEATHER_ALL_KEYS[0] if OPENWEATHER_ALL_KEYS else None
 

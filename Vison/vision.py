@@ -3,8 +3,8 @@ import base64
 import pyautogui
 from groq import Groq
 from openai import OpenAI
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import VISION_LLMS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import VISION_LLMS
 from langchain_core.messages import HumanMessage
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -19,18 +19,20 @@ def _ask_vision(img_b64: str, prompt_text: str) -> str:
     model). Fallback: Groq qwen3.8-27b, rotating across GROQ_VISION_KEY_*
     on 429, only if OpenRouter fails entirely."""
     message = HumanMessage(content=[
-            {"type": "image_url", "image_url": {
-                "url": f"data:image/png;base64,{img_b64}"}},
-            {"type": "text", "text": prompt_text},
-        ])
+        {"type": "image_url", "image_url": {
+            "url": f"data:image/png;base64,{img_b64}"}},
+        {"type": "text", "text": prompt_text},
+    ])
 
     def call(name, cfg, key):
         if cfg["provider"] == "groq_vision":
             client = Groq(api_key=key)
         else:
-            client = OpenAI(api_key=key, base_url="https://openrouter.ai/api/v1")
+            client = OpenAI(
+                api_key=key, base_url="https://openrouter.ai/api/v1")
         response = client.chat.completions.create(
-            model=cfg["model"], messages=[{"role": "user", "content": message.content}]
+            model=cfg["model"], messages=[
+                {"role": "user", "content": message.content}]
         )
         return response.choices[0].message.content
 

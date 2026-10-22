@@ -1,13 +1,11 @@
 from ddgs import DDGS
 from langchain_core.tools import tool
-from Main.llm_gateway import get_gateway
-from Main.config import PLAIN_LLMS
+from config_settings.llm_gateway import get_gateway
+from config_settings.config import PLAIN_LLMS
 import webbrowser
 
 from dotenv import load_dotenv
 load_dotenv()
-
-
 
 
 def search_news(query: str) -> str:

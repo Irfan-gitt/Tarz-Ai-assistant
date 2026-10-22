@@ -5,8 +5,8 @@ import soundfile as sf
 import pyaudio
 from groq import Groq
 from cartesia import Cartesia
-from Main.llm_gateway import get_gateway, AllModelsFailed
-from Main.config import TTS_MODELS
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import TTS_MODELS
 
 _MARKDOWN_STRIP = re.compile(r'[*_`#]')
 _URL_STRIP = re.compile(r'https?://\S+')
@@ -58,6 +58,7 @@ def speak(text: str):
     text = _clean_for_speech(text)
     if not text:
         return
+
     def call(name, cfg, key):
         if name == "tts_groq":
             return _speak_groq(text, cfg, key)
