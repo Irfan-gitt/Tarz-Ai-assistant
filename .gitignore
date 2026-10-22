@@ -44,3 +44,5 @@ configs/
 playground/
 
 mailmap.txt
+
+tarz_memory_qdrant/
