@@ -54,20 +54,19 @@ _NO_RETRY = {"max_retries": 0}
 MODEL_CONFIGS = {
     "tool_groq": {"provider": "groq", "model": "openai/gpt-oss-120b", "temperature": 0, **_FAST},
     "tool_groq_qwen": {"provider": "groq", "model": "qwen/qwen3.8-27b", "temperature": 0, **_FAST},
-    "tool_gemini": {"provider": "google", "model": "gemini-3.7-flash", "temperature": 0.2, **_FAST},
+    "tool_gemini": {"provider": "google", "model": "gemini-2.5-flash", "temperature": 0.2, **_FAST},
     "tool_openrouter": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0, **_NO_RETRY},
 
     "classify_groq": {"provider": "groq", "model": "openai/gpt-oss-120b", "temperature": 0, **_FAST},
     "classify_groq_qwen": {"provider": "groq", "model": "qwen/qwen3.8-27b", "temperature": 0, **_FAST},
-    "classify_gemini": {"provider": "google", "model": "gemini-3.7-flash", "temperature": 0, **_FAST},
+    "classify_gemini": {"provider": "google", "model": "gemini-2.5-flash", "temperature": 0, **_FAST},
     "classify_openrouter": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0, **_NO_RETRY},
 
     "plain_groq": {"provider": "groq", "model": "openai/gpt-oss-120b", "temperature": 0.6, **_FAST},
     "plain_groq_qwen": {"provider": "groq", "model": "qwen/qwen3.8-27b", "temperature": 0.6, **_FAST},
-    "plain_gemini": {"provider": "google", "model": "gemini-3.7-flash", "temperature": 0.6, **_FAST},
+    "plain_gemini": {"provider": "google", "model": "gemini-2.5-flash", "temperature": 0.6, **_FAST},
     "plain_openrouter": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.6, **_NO_RETRY},
-    "plain_action": {"provider": "groq", "model": "llama-3.3-70b-versatile", "temperature": 0.7, **_FAST},
-    "plain_news": {"provider": "groq", "model": "llama-3.3-70b-versatile", "temperature": 0.4, **_FAST},
+
 
     "vision_groq": {"provider": "groq_vision", "model": "qwen/qwen3.8-27b"},
     "vision_openrouter": {

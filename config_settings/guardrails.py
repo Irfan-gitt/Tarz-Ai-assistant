@@ -1,12 +1,19 @@
+import json
 import logging
+import os
 import re
+import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
 from pydantic import BaseModel
 
 log = logging.getLogger("tarz.guard")
 
+VAULT_PATH = str(Path(__file__).resolve().parent.parent /
+                 "data" / "pii_vault.json")
+_vault_lock = threading.Lock()
 BLOCK_REPLY = "I blocked that. It looks like a prompt injection or a harmful system command."
 JEV_LEVELS = {"normal": 0, "unsure": 1, "attack": 2}
 JevAsk = Callable[[str], Optional[dict[str, str]]]
@@ -129,13 +136,42 @@ class GuardResult:
 
 
 class Guardrails:
-    def __init__(self, ask: Optional[JevAsk] = None, always_jev: bool = False, max_chars: int = 2000):
+    def __init__(self, ask: Optional[JevAsk] = None, always_jev: bool = False, max_chars: int = 2000,
+                 vault_path: Optional[str] = None):
+        self.vault_path = vault_path
         self.ask = ask
         self.always_jev = always_jev
         self.max_chars = max_chars
 
+    def _read_vault(self) -> dict[str, str]:
+        if not self.vault_path or not os.path.exists(self.vault_path):
+            return {}
+        try:
+            with open(self.vault_path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            log.warning("pii vault unreadable, moved to .bad: %s",
+                        self.vault_path)
+            os.replace(self.vault_path, self.vault_path + ".bad")
+            return {}
+
+    def _write_vault(self, mapping: dict[str, str]) -> None:
+        os.makedirs(os.path.dirname(self.vault_path), exist_ok=True)
+        tmp = self.vault_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False)
+        os.replace(tmp, self.vault_path)
+
+    def mask(self, text: str, existing_map: Optional[dict[str, str]] = None) -> tuple[str, dict[str, str]]:
+        with _vault_lock:
+            vault = self._read_vault()
+            masked, mapping = mask_pii(text, {**vault, **(existing_map or {})})
+            if self.vault_path and mapping.keys() - vault.keys():
+                self._write_vault({**vault, **mapping})
+            return masked, mapping
+
     def check(self, text: str, existing_map: Optional[dict[str, str]] = None) -> GuardResult:
-        masked, pii_map = mask_pii(text, existing_map)
+        masked, pii_map = self.mask(text, existing_map)
 
         for category, patterns in HARD.items():
             if any(rx.search(masked) for rx in patterns):
