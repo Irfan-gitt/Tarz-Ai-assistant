@@ -1,4 +1,3 @@
-from config_settings. guardrails import Guardrails, jev_ask, restore
 import keyboard
 import winreg
 import threading
@@ -7,6 +6,7 @@ import time
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Command, interrupt
 from typing import Annotated, Literal
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
@@ -20,6 +20,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 from langsmith import traceable
+from config_settings.guardrails import Guardrails, jev_ask, restore
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
 from config_settings.config import TOOL_CALLING_LLMS, CLASSIFY_LLMS, PLAIN_LLMS, jev_client, Choice
 from Prompts.prompt import SYSTEM, SUPERVISOR_PROMPT
@@ -35,8 +36,8 @@ from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_togg
 from Tools.Dedicated_Tools.browser_gui import browser_open_url
 print("on tools")  # noqa
 from Actions.execute_action import click, type_text, press_key, read_screen, open_app, volume_control, wether_app, use_shortcut, set_alarm, news_update, set_timer, translate, clipboard, wait, done
-from Tools.memory import save_imp_context
-from Tools.rag import reranked_retrieve
+from Memory_and_Retrieval.memory import save_imp_context
+from Memory_and_Retrieval.rag import reranked_retrieve
 from Tools.media_control import media_play_pause, media_next_track, media_previous_track
 from pydantic import BaseModel, Field
 from Audio.stt import live_listen
@@ -66,6 +67,11 @@ ALL_TOOLS = [
     telegram_message_user,
 ]
 
+RISKY_TOOLS = {
+    "delete_event", "send_email", "whatsapp_send_message", "whatsapp_call_contact",
+    "discord_send_message", "telegram_message_user",
+}
+
 
 print("[Init] Setting up LLMs...")
 
@@ -81,20 +87,17 @@ class TarzState(TypedDict):
     worker_steps: int
     next: str
     supervisor_instruction: str
+    pii_map: dict[str, str]
+    blocked: bool
+    flagged: bool
 
 
 MAX_WORKER_STEPS = 6
 MAX_STEPS = 12
 
-
 guard = Guardrails(ask=jev_ask)
 
-
-class TarzState(TypedDict):
-    ...  # your existing keys
-    pii_map: dict[str, str]
-    blocked: bool
-    flagged: bool
+# GUARDRAILS ---
 
 
 def guardrail_node(state: TarzState) -> dict:
@@ -112,6 +115,36 @@ def guardrail_node(state: TarzState) -> dict:
 
 def restore_args_node(state: TarzState) -> dict:
     last = state["messages"][-1]
+    if not getattr(last, "tool_calls", None):
+        return {}
     calls = [{**c, "args": restore(c["args"], state.get("pii_map", {}))}
              for c in last.tool_calls]
     return {"messages": [AIMessage(content=last.content, tool_calls=calls, id=last.id)]}
+
+
+def approval_node(state: TarzState) -> Command[Literal["tools", "__end__"]]:
+    last = state["messages"][-1]
+    risky = [c for c in last.tool_calls if c["name"]
+             in RISKY_TOOLS or state.get("flagged")]
+    if not risky:
+        return Command(goto="tools")
+
+    decision = interrupt({
+        "type": "approval",
+        "calls": [{"id": c["id"], "tool": c["name"], "args": c["args"]} for c in risky],
+    })
+    if decision.get("approved"):
+        return Command(goto="tools")
+
+    cancelled = [ToolMessage(content="Cancelled by user.",
+                             tool_call_id=c["id"]) for c in last.tool_calls]
+    return Command(goto=END, update={"messages": cancelled + [AIMessage(content="Okay, cancelled.")]})
+
+# ----
+
+# RAG - rtrvl
+
+
+# ----
+
+#
