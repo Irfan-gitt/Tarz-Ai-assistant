@@ -18,11 +18,10 @@ from Audio.stt import listen as stt_listen
 from Audio.tts import speak
 print("on tools")  # noqa
 from Actions.execute_action import type_text, press_key, open_app, read_screen, volume_control, news_update, wether_app, use_shortcut, set_alarm, set_timer, translate, remember, clipboard, detect_mood, correct_memory, wait, done
-from Tools.memory import save_task, retrieve_similar_task, retrieve_similar_chats, get_recent_tasks, get_all_preferences, save_conversation, get_recent_conversations, build_memory_context, auto_extract_memories
+from Memory_and_Retrieval.memory import save_task, retrieve_similar_task, retrieve_similar_chats, get_recent_tasks, get_all_preferences, save_conversation, get_recent_conversations, build_memory_context, auto_extract_memories
 
 from Actions.execute_action import click
 print("[Init] 3 - rag...")
-
 
 
 TOOLS = [click, type_text, press_key, open_app,
@@ -72,6 +71,7 @@ def should_use_tool_router(user_input: str) -> bool:
 
 print("[Init] Setting up LLMs...")
 
+
 def listen():
     user_input = input("You:")
     return user_input
@@ -95,7 +95,7 @@ YES for: opening apps, clicking, typing, searching web, playing music, news look
 NO for: pure conversation, jokes, math, general knowledge questions with no action needed
 
 Be generous with YES - when in doubt say YES."""),
-        HumanMessage(user_input)
+            HumanMessage(user_input)
         ])
     except AllModelsFailed as e:
         print(f"[Router] Classification failed: {e}")
