@@ -2,9 +2,11 @@
 TARZ retrieval: turns stored memories into one small text block for the prompt.
 
 Three parts (all optional, empty parts are skipped):
-  1. About the user      - most important memories, always included, not searched
-  2. Related to message  - top matches for the recent messages, ranked by
-                           relevance + importance + recency (events fade, facts do not)
+  1. About the user      - important memories, always included, not searched
+                           (old past events drop out, facts and preferences stay)
+  2. Related to message  - top matches for the recent messages. A match must pass an
+                           absolute floor AND be close to the best match, then it is
+                           ranked by relevance (vs the best match) + importance + recency
   3. Follow up           - planned events that are due ("how was the interview?")
 
 Use:
@@ -13,7 +15,8 @@ Use:
     ... after TARZ really asked the follow-up: mark_followups_asked(ctx.followup_ids)
 
 Dates are stored absolute and shown relative here ("yesterday"), computed fresh.
-Tune MIN_RELEVANCE and the weights with test_retrieval.py.
+Re-check MIN_RELEVANCE after changing the embedding model or the memory text:
+run  python testmm.py  and read section B2b.
 """
 
 from dataclasses import dataclass, field
@@ -26,12 +29,16 @@ from Memory_and_Retrieval import memory as mem
 # --------------------------------------------------------------------------
 # ranking weights (relevance matters most)
 W_REL, W_IMP, W_REC = 0.6, 0.25, 0.15
-# Jina cosine score below this is treated as unrelated (tune it!)
-MIN_RELEVANCE = 0.55
-CANDIDATES = 15  # how many matches to fetch before re-ranking
+# absolute floor on the Jina cosine score (set from testmm.py B2b)
+MIN_RELEVANCE = 0.585
+# also stay within this distance of the best match
+RELATIVE_WINDOW = 0.10
+CANDIDATES = 15  # how many matches to fetch before filtering
 MAX_RELEVANT = 5
 CORE_MIN_IMPORTANCE = 4
 MAX_CORE = 6
+# a past event stays in "About the user" this long, then only search finds it
+CORE_EVENT_MAX_DAYS = 3
 MAX_FOLLOWUPS = 2
 MAX_CONTEXT_TOKENS = 400  # rough: 1 token ~ 4 characters
 HALF_LIFE_DAYS = 14  # events lose half of their recency boost every 14 days
@@ -86,8 +93,43 @@ def _recency(item: dict, now: datetime) -> float:
     return 0.5 ** ((now - ref).total_seconds() / 86400 / HALF_LIFE_DAYS)
 
 
-def _rank_score(item: dict, now: datetime) -> float:
-    return W_REL * item["score"] + W_IMP * item.get("importance", 3) / 5 + W_REC * _recency(item, now)
+def _rank_score(item: dict, now: datetime, top: float, span: float) -> float:
+    """Relevance is measured against the best match (1.0 = best, 0.0 = `span` below it).
+    Raw Jina scores sit in a narrow band, so using them directly let importance beat a clearly better match."""
+    rel = max(0.0, min(1.0, 1 - (top - item["score"]) / span))
+    return W_REL * rel + W_IMP * item.get("importance", 3) / 5 + W_REC * _recency(item, now)
+
+
+def _core_ok(item: dict, now: datetime) -> bool:
+    if item.get("kind") not in DECAY_KINDS:
+        return True
+    ref = mem._parse_time(item.get("event_at") or item.get("timestamp"))
+    return ref is None or ref >= now or (now - ref).days <= CORE_EVENT_MAX_DAYS
+
+
+def pick_core(now: datetime) -> list[dict]:
+    items = mem.get_important_memories(
+        min_importance=CORE_MIN_IMPORTANCE, limit=MAX_CORE * 3)
+    return [m for m in items if _core_ok(m, now)][:MAX_CORE]
+
+
+def select_relevant(candidates: list[dict], core_ids: set, now: datetime, floor: float | None = None,
+                    window: float | None = None) -> list[dict]:
+    """Drop core duplicates, apply the absolute floor and the window below the best match, then rank."""
+    floor = MIN_RELEVANCE if floor is None else floor
+    window = RELATIVE_WINDOW if window is None else window
+    pool = [c for c in candidates if c["id"] not in core_ids]
+    if not pool:
+        return []
+    top = max(c["score"] for c in pool)
+    keep = [c for c in pool if c["score"] >= max(floor, top - window)]
+    if not keep:
+        return []
+    span = max(min(window, top - floor), 0.05)
+    ranked = [
+        {**c, "rank_score": round(_rank_score(c, now, top, span), 3)} for c in keep]
+    ranked.sort(key=lambda m: m["rank_score"], reverse=True)
+    return ranked[:MAX_RELEVANT]
 
 
 def _line(item: dict, now: datetime) -> str:
@@ -137,19 +179,11 @@ def _build(messages, include_followups: bool, max_tokens: int) -> MemoryContext:
     now = mem._now()
     query = build_query(messages)
 
-    core = mem.get_important_memories(
-        min_importance=CORE_MIN_IMPORTANCE, limit=MAX_CORE)
-    core_ids = {m["id"] for m in core}
-
+    core = pick_core(now)
     relevant = []
     if len(query.split()) >= MIN_QUERY_WORDS:
-        for item in mem.get_relevant_memories(query, limit=CANDIDATES):
-            if item["id"] in core_ids or item["score"] < MIN_RELEVANCE:
-                continue
-            relevant.append(
-                {**item, "rank_score": round(_rank_score(item, now), 3)})
-        relevant.sort(key=lambda m: m["rank_score"], reverse=True)
-        relevant = relevant[:MAX_RELEVANT]
+        relevant = select_relevant(mem.get_relevant_memories(
+            query, limit=CANDIDATES), {m["id"] for m in core}, now)
 
     followups = mem.get_due_followups(
         limit=MAX_FOLLOWUPS) if include_followups else []
