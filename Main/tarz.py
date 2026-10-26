@@ -35,8 +35,8 @@ from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_togg
 from Tools.Dedicated_Tools.browser_gui import browser_open_url
 print("on tools")  # noqa
 from Actions.execute_action import click, type_text, press_key, read_screen, open_app, volume_control, wether_app, use_shortcut, set_alarm, news_update, set_timer, translate, clipboard, wait, done
-from Tools.memory import save_imp_context
-from Tools.rag import reranked_retrieve
+from Memory_and_Retrieval.memory import save_imp_context
+from Memory_and_Retrieval.rag import reranked_retrieve
 from Tools.media_control import media_play_pause, media_next_track, media_previous_track
 from pydantic import BaseModel, Field
 from Audio.stt import live_listen
