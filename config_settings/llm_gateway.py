@@ -198,7 +198,7 @@ def get_gateway() -> LLMGateway:
     global _gateway
     with _gateway_lock:
         if _gateway is None:
-            from config import API_KEYS, MODEL_CONFIGS, make_llm
+            from config_settings.config import API_KEYS, MODEL_CONFIGS, make_llm
             from Tools.cancel_state import check_cancel
             _gateway = LLMGateway(MODEL_CONFIGS, API_KEYS, make_llm,
                                   cancel_check=check_cancel)
