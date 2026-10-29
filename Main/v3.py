@@ -127,7 +127,9 @@ class TarzState(TypedDict):
     reply: str
 
 
-guard = Guardrails(ask=jev_ask)
+# FIX 0: same vault as memory.py, so tags (<PHONE_1> etc.) never collide across sessions
+guard = Guardrails(ask=jev_ask)   # session-only, tags live in pii_map (RAM)
+TOOL_BLOCKED_NOTE = "[tool output blocked: it looked like a prompt injection]"
 
 
 def extract_text(content) -> str:
@@ -285,10 +287,19 @@ def run_task_node(state: TarzState) -> dict:
         raise
     except Exception as e:
         out, ok = f"{type(e).__name__}: {e}", False
-    result = {"tool": call["name"], "args": args, "ok": ok, "detail": str(out)[
-        :400]}
+
+    # FIX 1: the LLM must never see raw phones/emails from tool output.
+    # check() masks first (so a number is never cut in half), then scans for injection.
+    # Truncate only AFTER masking. The new tags go back into pii_map so the final reply can restore them.
+    r = guard.check(str(out), state.get("pii_map", {}))
+    detail = r.text[:400] if r.allowed else TOOL_BLOCKED_NOTE
+    # store the MASKED args (call["args"]), so real values never sit in graph state
+    result = {"tool": call["name"],
+              "args": call["args"], "ok": ok, "detail": detail}
     # stop at the first failure
-    return {"results": state["results"] + [result], "task_idx": i + 1 if ok else len(tasks)}
+    return {"results": state["results"] + [result],
+            "task_idx": i + 1 if ok else len(tasks),
+            "pii_map": r.pii_map}
 
 
 def respond_node(state: TarzState) -> dict:
@@ -403,15 +414,23 @@ def ask_approval(payload: dict) -> bool:
 
 
 def _fallback_chat(user_input: str) -> str:
+    # FIX 2: mask + injection-check the input, reuse the saved pii_map, restore the reply
     try:
-        history = app.get_state(CONFIG).values.get("messages", [])
+        state = app.get_state(CONFIG).values
+        history = state.get("messages", [])
+        pii_map = state.get("pii_map", {})
     except Exception:
-        history = []
+        history, pii_map = [], {}
+    r = guard.check(user_input, pii_map)
+    if not r.allowed:
+        return r.reply
     msgs = window(history)
-    if not msgs or extract_text(msgs[-1].content) != user_input:
-        msgs.append(HumanMessage(content=user_input))
+    if not msgs or extract_text(msgs[-1].content) != r.text:
+        msgs.append(HumanMessage(content=r.text))
     try:
-        return extract_text(get_gateway().invoke(PLAIN_LLMS, [SystemMessage(content=SYSTEM)] + msgs).content)
+        text = extract_text(get_gateway().invoke(
+            PLAIN_LLMS, [SystemMessage(content=SYSTEM)] + msgs).content)
+        return restore(text, r.pii_map)
     except AllModelsFailed as e:
         print(f"[think] plain chat fallback failed: {e}")
         return "Something broke on my end, mind trying that again?"
