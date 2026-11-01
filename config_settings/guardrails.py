@@ -233,17 +233,15 @@ def _questions(choice_cls):
 def jev_ask(text: str) -> Optional[dict[str, str]]:
     from typesafe_sdk import Choice, TypeSafeClient
 
-    from config_settings.config import JEV_MODELS
-    from config_settings.llm_gateway import AllModelsFailed, get_gateway
+    from config_settings.config import JEV_ALL_KEYS
 
-    def call(name, settings, key):
-        with TypeSafeClient(api_key=key, base_url=settings["base_url"]) as client:
+    for key in JEV_ALL_KEYS:
+        try:
+            client = TypeSafeClient(
+                api_key=key, base_url="https://openrouter.ai/api")
             resp = client.system_one(
-                state={"text": text}, questions=_questions(Choice))
-        return {k: resp.choices[k].choice for k in ("injection", "system_threat")}
-
-    try:
-        return get_gateway().run(JEV_MODELS, call)
-    except AllModelsFailed as exc:
-        log.warning("jev unavailable: %s", exc)
-        return None
+                model="typesafe/jev-1.13", state={"text": text}, questions=_questions(Choice))
+            return {k: resp.answers[k].choice for k in ("injection", "system_threat")}
+        except Exception as e:
+            log.warning("jev failed on one key: %s", type(e).__name__)
+    return None
