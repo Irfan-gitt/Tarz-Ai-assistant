@@ -225,3 +225,5 @@ if __name__ == "__main__":
     print(f"source={data['source']} window={data['window']!r}")
     for e in data["elements"]:
         print(f'[{e.id}] {e.role}: "{e.name}" @({e.x},{e.y}) {e.where}')
+
+# final
