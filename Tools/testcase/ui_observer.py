@@ -191,11 +191,108 @@ def vision_expose(vp, targets: Optional[list[str]] = None) -> list[El]:
 
 
 # --------------------------------------------------------------------------
+# Compaction: cut duplicates + decoration, keep everything the agent can act on
+# --------------------------------------------------------------------------
+MAX_VISIBLE, MAX_BELOW, MAX_ABOVE = 60, 8, 5
+STRONG = {"Button", "CheckBox", "ComboBox", "Edit", "MenuItem", "RadioButton",
+          "Slider", "Spinner", "SplitButton", "TabItem"}
+# when several roles sit on the same spot with the same name, keep the most useful one
+RANK = {**{r: 0 for r in STRONG}, "Hyperlink": 1, "ListItem": 2, "TreeItem": 2,
+        "DataItem": 3, "Document": 4, "Text": 5, "Image": 6}
+# row wrappers that repeat their children's text
+CONTAINERS = {"DataItem", "ListItem"}
+BULLETS = {"•", "·", "|", "-", "—", "/"}
+ROW_Y = 30                                       # "same row" tolerance in pixels
+# Text elements that are really controls (Spotify exposes sliders this way) or live values
+CONTROL_TEXT = re.compile(
+    r"^(change|set|adjust|seek|toggle|select|search|enter)\b", re.I)
+
+
+def compact(els: list[El], task: str = "", notes: str = "", title: str = "") -> list[El]:
+    """Typical result: ~670 raw elements -> ~70. Nothing clickable/typeable is dropped except exact
+    duplicates (same name, same spot) and row wrappers whose text is already covered by a button/link
+    on the same row."""
+    words = set(re.findall(r"\w{3,}", (task + " " + notes).lower()))
+
+    def hit(e: El) -> bool:
+        return any(w in e.name.lower() for w in words)
+
+    t = title.lower().strip()
+
+    # 1) empty / bullet / whole-window-document noise
+    keep = []
+    for e in els:
+        n = e.name.strip()
+        if not n and e.role not in TEXT_ROLES:
+            continue
+        if n in BULLETS:
+            continue
+        if e.role == "Document" and t and n.lower() == t:
+            continue
+        keep.append(e)
+
+    # 2) same name on the same spot (DataItem+Button, Hyperlink+CheckBox, Image+Button ...)
+    best: dict = {}
+    for e in keep:
+        k = (e.name.lower(), e.x // 8, e.y // 8, e.where)
+        cur = best.get(k)
+        if cur is None or RANK.get(e.role, 9) < RANK.get(cur.role, 9):
+            best[k] = e
+    keep = list(best.values())
+
+    # 3) row wrappers: "Song More options for X Add to playlist" / "Gigi Perez" next to its link.
+    #    Only dropped when a button/link on the SAME ROW already carries that text, so a File Explorer
+    #    list item is never lost to a breadcrumb button of the same name.
+    strong = [(e.name.lower(), e.y) for e in keep
+              if (e.role in STRONG or e.role == "Hyperlink") and e.name]
+    pats = {sn: re.compile(r"\b" + re.escape(sn) + r"\b")
+            for sn, _ in strong if len(sn) >= 4 and " " in sn}
+
+    def covered(e: El) -> bool:
+        low = e.name.lower()
+        for sn, sy in strong:
+            if abs(sy - e.y) > ROW_Y:
+                continue
+            if low == sn or (sn in pats and pats[sn].search(low) and low != sn):
+                return True
+        return False
+
+    keep = [e for e in keep if not (e.role in CONTAINERS and covered(e))]
+
+    # 4) decoration: images, and text that is neither a task match, a value nor a hidden control
+    def useful_text(e: El) -> bool:
+        n = e.name
+        return (hit(e) or bool(CONTROL_TEXT.match(n))
+                or (len(n) <= 30 and bool(re.search(r"\d", n))))
+
+    keep = [e for e in keep
+            if not (e.role == "Image" and not hit(e))
+            and not (e.role == "Text" and not useful_text(e))]
+
+    # 5) order (task matches first, then reading order) and cap each zone
+    zones = {"visible": [], "below": [], "above": []}
+    for e in keep:
+        zones[e.where].append(e)
+    zones["visible"].sort(key=lambda e: (not hit(e), e.y, e.x))
+    zones["below"].sort(key=lambda e: (not hit(e), e.y))
+    zones["above"].sort(key=lambda e: (not hit(e), -e.y))
+    caps = {"visible": MAX_VISIBLE, "below": MAX_BELOW, "above": MAX_ABOVE}
+    out: list[El] = []
+    for z in ("visible", "below", "above"):
+        out += zones[z][:caps[z]]
+    for i, e in enumerate(out):
+        e.id = i
+    return out
+
+
+# --------------------------------------------------------------------------
 # The layer: expose()
 # --------------------------------------------------------------------------
-def expose(targets: Optional[list[str]] = None, force_vision: bool = False) -> dict:
+def expose(targets: Optional[list[str]] = None, force_vision: bool = False,
+           task: str = "", notes: str = "", compact_els: bool = True) -> dict:
     """UIA first; if it exposes too little (canvas / Electron / etc.) use vision.
-    Returns {"source", "window", "viewport", "elements"}; elements carry name + x,y."""
+    Returns {"source", "window", "viewport", "elements", "raw_count"}; elements carry name + x,y.
+    Pass task/notes so elements matching the task words are ranked first."""
     title, vp, els = ("", None, [])
     if not force_vision:
         try:
@@ -204,7 +301,10 @@ def expose(targets: Optional[list[str]] = None, force_vision: bool = False) -> d
             print(f"[expose] UIA failed: {e}")
     named = [e for e in els if e.name]
     if len(named) >= MIN_UIA_ELEMENTS and not force_vision:
-        return {"source": "uia", "window": title, "viewport": vp, "elements": els}
+        out = compact(els, task, notes, title) if compact_els else els
+        print(f"[expose] UIA {len(els)} raw -> {len(out)} sent")
+        return {"source": "uia", "window": title, "viewport": vp,
+                "elements": out, "raw_count": len(els)}
 
     print(
         f"[expose] UIA gave {len(named)} elements -> falling back to Moondream vision")
@@ -212,8 +312,9 @@ def expose(targets: Optional[list[str]] = None, force_vision: bool = False) -> d
         fw = _front_window()
         vp = fw[1] if fw else None
         title = title or (fw[0].window_text() if fw else "")
+    v = vision_expose(vp, targets)
     return {"source": "vision", "window": title, "viewport": vp,
-            "elements": vision_expose(vp, targets)}
+            "elements": v, "raw_count": len(v)}
 
 
 if __name__ == "__main__":
@@ -225,5 +326,3 @@ if __name__ == "__main__":
     print(f"source={data['source']} window={data['window']!r}")
     for e in data["elements"]:
         print(f'[{e.id}] {e.role}: "{e.name}" @({e.x},{e.y}) {e.where}')
-
-# final
