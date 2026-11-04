@@ -217,7 +217,7 @@ def expose(targets: Optional[list[str]] = None, force_vision: bool = False) -> d
 
 
 if __name__ == "__main__":
-    app = sys.argv[1] if len(sys.argv) > 1 else ""
+    app = sys.argv[1] if len(sys.argv) > 1 else "spotify"
     if app:
         open_app(app)
     wait()
