@@ -1,3 +1,14 @@
+"""
+Tests for the memory + retrieval layer (Memory_and_Retrieval/memory.py and rag.py).
+
+    python testmm.py --logic   Part A only: offline, no Jina, no LLM
+    python testmm.py           Part A + Part B: real Jina (about 70 calls, no LLM). B2b tells you the right MIN_RELEVANCE
+    python testmm.py --llm     also checks the keywords your real extraction LLM produces
+    python testmm.py --tune    also compares Jina tasks and searches the best floor and window
+    python testmm.py --plain   seeds memories WITHOUT keywords, to see what keywords add
+"""
+import contextlib
+import io
 import os
 import pathlib
 import sys
@@ -69,6 +80,9 @@ check(retrieval.select_relevant([cand("n1", "x", 0.57), cand("n2", "x", 0.56)], 
 ), NOW, floor=0.58) == [], "all-noise scores return nothing")
 check(len(retrieval.select_relevant(pool, set(), NOW, floor=0.5,
       window=1.0)) == 3, "window 1.0 switches the window off")
+edge = retrieval.MIN_RELEVANCE
+check(retrieval.select_relevant([cand("lo", "x", edge - 0.001)], set(), NOW) == [] and len(retrieval.select_relevant(
+    [cand("hi", "x", edge + 0.001)], set(), NOW)) == 1, "the default floor cuts just below it and keeps just above it")
 
 print("--- A2. No duplicates, and old events leave the core")
 goal = cand("g", "User's goal is a GenAI job", importance=4)
@@ -159,8 +173,9 @@ check(retrieval.build_query(
 
 print("--- A9. Safety")
 patch(relevant="boom")
-check(retrieval.build_memory_context(QUERY).text == "",
-      "a failing search returns an empty context, no crash")
+with contextlib.redirect_stdout(io.StringIO()):
+    boom_text = retrieval.build_memory_context(QUERY).text
+check(boom_text == "", "a failing search returns an empty context, no crash")
 patch()
 check(retrieval.build_memory_context(QUERY).text ==
       "", "no memories -> empty text")
@@ -322,10 +337,39 @@ if not LOGIC_ONLY:
     core_ids = {m["id"] for m in retrieval.pick_core(NOW)}
     for q, gold in [(q, g) for q, g in QUESTIONS if not g]:
         ctx = retrieval.build_memory_context(q, include_followups=False)
-        top = max((r["score"] for r in memory.get_relevant_memories(
-            q, limit=15) if r["id"] not in core_ids), default=0)
+        raw = [r for r in memory.get_relevant_memories(
+            q, limit=15) if r["id"] not in core_ids]
+        top = max(raw, key=lambda r: r["score"],
+                  default={"score": 0, "text": ""})
         check(ctx.relevant == [
-        ], f"'{q}' -> nothing related (best score outside core {top:.2f}, floor {retrieval.MIN_RELEVANCE})")
+        ], f"'{q}' -> nothing related (best {top['score']:.2f}: '{top['text'][:45]}', floor {retrieval.MIN_RELEVANCE})")
+
+    print("\n--- B2b. Where should the floor be?")
+    right_scores, noise = [], []
+    for q, gold in QUESTIONS:
+        raw = [r for r in memory.get_relevant_memories(
+            retrieval.build_query(q), limit=15) if r["id"] not in core_ids]
+        if gold:
+            hits = [r["score"] for r in raw if matches(r["text"], gold)]
+            if hits:
+                right_scores.append((max(hits), label(q)))
+        elif raw:
+            best_noise = max(raw, key=lambda r: r["score"])
+            noise.append((best_noise["score"], q, best_noise["text"]))
+    if right_scores and noise:
+        weakest, strongest = min(right_scores), max(noise)
+        gap = weakest[0] - strongest[0]
+        print(f"  weakest right answer : {weakest[0]:.2f}  ('{weakest[1]}')")
+        print(
+            f"  strongest unrelated  : {strongest[0]:.2f}  ('{strongest[1]}' matched '{strongest[2][:45]}')")
+        if gap > 0:
+            print(
+                f"  👉 clean gap of {gap:.2f}: set MIN_RELEVANCE = {(weakest[0] + strongest[0]) / 2:.3f} in rag.py (now {retrieval.MIN_RELEVANCE})")
+            if gap < 0.03:
+                print("  ⚠️  the gap is thin: an unrelated question can still bring one extra memory now and then (that costs about 30 tokens, a missed memory costs more)")
+        else:
+            print(f"  ⚠️  no clean gap ({gap:+.2f}): one floor cannot separate them. A missed memory costs more than an extra line, "
+                  f"so use MIN_RELEVANCE = {weakest[0] - 0.01:.2f} and accept a rare extra memory")
 
     print("\n--- B3. Core, follow-ups, history")
     ctx = retrieval.build_memory_context(
