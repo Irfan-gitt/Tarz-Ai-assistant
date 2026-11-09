@@ -1264,15 +1264,16 @@ def computer_agent(task: str, file_hint: str = "") -> dict:
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("task", nargs="*")
-    ap.add_argument("--file", default="",
-                    help="part of the expected downloaded file name, e.g. spotify")
-    ap.add_argument("--seconds", type=int, default=300, help="time limit")
-    args = ap.parse_args()
-    t = " ".join(args.task) or input("Task: ")
-    res = run_task(
-        t, args.file, max_seconds=args.seconds,
-        confirm=lambda d: input(f"\n{d} [y/N] ").strip().lower() == "y",
-        ask=lambda q: input(f"\nAgent asks: {q}\n> "))
-    print("\nRESULT:", json.dumps(res, indent=2))
+    while True:
+        ap = argparse.ArgumentParser()
+        ap.add_argument("task", nargs="*")
+        ap.add_argument("--file", default="",
+                        help="part of the expected downloaded file name, e.g. spotify")
+        ap.add_argument("--seconds", type=int, default=300, help="time limit")
+        args = ap.parse_args()
+        t = " ".join(args.task) or input("Task: ")
+        res = run_task(
+            t, args.file, max_seconds=args.seconds,
+            confirm=lambda d: input(f"\n{d} [y/N] ").strip().lower() == "y",
+            ask=lambda q: input(f"\nAgent asks: {q}\n> "))
+        print("\nRESULT:", json.dumps(res, indent=2))
