@@ -45,7 +45,11 @@ API_KEYS = {
     "jina": JINA_ALL_KEYS,
 }
 
-
+# per API KEY, keyed by the PROVIDER model id (not your config name)
+MODEL_LIMITS = {
+    "openai/gpt-oss-120b": {"tpm": 8000, "rpm": 30},
+    "qwen/qwen3.8-27b": {"tpm": 6000, "rpm": 30},
+}
 # Retries off: the gateway, not the SDK, decides when to switch key or model.
 _FAST = {"timeout": 30, "max_retries": 0}
 _NO_RETRY = {"max_retries": 0}
