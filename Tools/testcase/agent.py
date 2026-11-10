@@ -26,6 +26,9 @@ How it behaves like a person:
 from screen_layer import open_app, wait, expose, compact, read_text, move_to, El, try_to_expose_data
 # temperature 0, JSON-friendly
 from config_settings.config import CLASSIFY_LLMS
+from dotenv import load_dotenv
+import pyperclip
+import pyautogui
 import os
 import sys
 import json
@@ -40,9 +43,25 @@ from copy import copy
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-import pyautogui
-import pyperclip
-from dotenv import load_dotenv
+
+def _com_init() -> None:
+    """UI Automation (pywinauto/comtypes) needs COM initialised IN THE THREAD THAT USES IT. comtypes does that
+    when it is first imported - in whichever thread imports it. If a background thread imported it first, the
+    main thread never got COM ("CoInitialize has not been called"). So: init explicitly, per thread."""
+    try:
+        if "comtypes" not in sys.modules:
+            # COINIT_APARTMENTTHREADED, what pywinauto expects
+            sys.coinit_flags = 2
+        import comtypes
+        comtypes.CoInitializeEx(getattr(sys, "coinit_flags", 2))
+    except Exception:
+        # already initialised in this thread / not on Windows
+        pass
+
+
+# the thread that imports this module
+_com_init()
+
 
 # project root (the folder that holds config_settings/ and Tools/) must be importable
 sys.path.insert(0, os.path.abspath(
@@ -379,6 +398,8 @@ MAX_VISIBLE, MAX_BELOW, MAX_ABOVE = 25, 3, 2
 NAME_LEN = 50
 BROWSER_BUDGET = 3.0              # max seconds spent reading one page's element tree
 OPEN_WAIT = 1.2
+# max seconds to wait for a freshly opened app's window title
+APP_WAIT = 10.0
 BROWSER, BROWSER_EXE, TITLE_MARK = "brave", None, "Brave"
 BROWSER_MODE = False              # True once the agent works inside a browser
 WEB_TASK = False                  # the task is about a website / browser
@@ -766,62 +787,151 @@ def _dialog_gone(d, timeout: float = 1.5) -> bool:
     return False
 
 
-def _save_via_uia(d, folder: str) -> bool:
-    """Operate the dialog through UI Automation (no blind keystrokes): put the FULL path into the
-    'File name' box, then press the Save button."""
-    try:
-        from pywinauto import Desktop
-        from pywinauto.controls.uiawrapper import UIAWrapper
-        win = Desktop(backend="uia").window(handle=d)
-        edits = win.element_info.descendants(control_type="Edit")
-        box = (next((i for i in edits if i.automation_id == "1001"), None)
-               or next((i for i in edits if "file name" in (i.name or "").lower()), None))
-        save = next((i for i in win.element_info.descendants(control_type="Button")
-                     if i.automation_id == "1" or (i.name or "").strip().lower() == "save"), None)
-        if box is None or save is None:
-            return False
-        field = UIAWrapper(box)
-        fname = os.path.basename(
-            (field.iface_value.CurrentValue or "").strip())
-        if not fname:
-            return False
-        field.iface_value.SetValue(os.path.join(folder, fname))
-        UIAWrapper(save).invoke()
+# the main thread and the background watcher never fight over a dialog
+_DIALOG_LOCK = threading.Lock()
+# dialog hwnd -> how many times we tried (no endless key spamming)
+_ATTEMPTS: dict = {}
+
+
+def _save_via_win32(d, folder: str) -> bool:
+    """Plain Win32, no UI Automation / COM / focus needed: read the File name edit, write the FULL path
+    into it, then click the Save button with a posted BM_CLICK. Works even if Windows refuses to focus us."""
+    import ctypes
+    from ctypes import wintypes
+    import win32gui
+    user32 = ctypes.windll.user32
+    user32.SendMessageW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.SendMessageW.restype = ctypes.c_ssize_t
+    user32.PostMessageW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    edits, btns = [], []
+
+    def cb(h, _):
+        cls = win32gui.GetClassName(h)
+        if cls == "Edit":
+            edits.append(h)
+        elif cls == "Button" and win32gui.GetWindowText(h).replace("&", "").strip().lower() == "save":
+            btns.append(h)
         return True
-    except Exception as ex:
-        print(f"   [dialog] UI Automation route failed: {ex}")
+    win32gui.EnumChildWindows(d, cb, None)
+    if not edits or not btns:
+        print(
+            f"   [dialog] win32: found {len(edits)} edit(s) / {len(btns)} Save button(s) - cannot use this route")
         return False
+    edit = next((h for h in edits if win32gui.GetDlgCtrlID(h)
+                in (1001, 1148)), edits[0])
+    buf = ctypes.create_unicode_buffer(1024)
+    user32.SendMessageW(edit, 0x000D, 1024, ctypes.addressof(
+        buf))            # WM_GETTEXT
+    fname = os.path.basename(buf.value.strip())
+    if not fname:
+        return False
+    path = ctypes.create_unicode_buffer(os.path.join(folder, fname))
+    user32.SendMessageW(edit, 0x000C, 0, ctypes.addressof(
+        path))              # WM_SETTEXT
+    # BM_CLICK on Save
+    user32.PostMessageW(btns[0], 0x00F5, 0, 0)
+    return True
+
+
+def _save_via_uia(d, folder: str) -> bool:
+    """UI Automation route: put the FULL path into the 'File name' box, then press the Save button."""
+    from pywinauto import Desktop
+    from pywinauto.controls.uiawrapper import UIAWrapper
+    win = Desktop(backend="uia").window(handle=d)
+    edits = win.element_info.descendants(control_type="Edit")
+    box = (next((i for i in edits if i.automation_id in ("1001", "1148")), None)
+           or next((i for i in edits if "file name" in (i.name or "").lower()), None))
+    save = next((i for i in win.element_info.descendants(control_type="Button")
+                 if i.automation_id == "1" or (i.name or "").strip().lower() == "save"), None)
+    if box is None or save is None:
+        return False
+    field = UIAWrapper(box)
+    fname = os.path.basename((field.iface_value.CurrentValue or "").strip())
+    if not fname:
+        return False
+    field.iface_value.SetValue(os.path.join(folder, fname))
+    UIAWrapper(save).invoke()
+    return True
+
+
+def _save_via_keys(folder: str) -> bool:
+    """Keyboard route: jump to File name, prefix the folder, Enter."""
+    pyautogui.hotkey("alt", "n")
+    pyautogui.press("home")
+    if folder.isascii():
+        pyautogui.write(folder + "\\", interval=0.01)
+    pyautogui.press("enter")
+    return True
 
 
 def handle_save_dialog() -> bool:
-    """Handle a 'Save As' / 'Confirm Save As' dialog. Returns True if a dialog was present.
-    Order: UI Automation (set path + click Save) -> keyboard (alt+n, folder prefix, Enter) -> alt+s -> Enter.
-    Every stage is followed by a check that the dialog really closed."""
+    """Handle a 'Save As' / '<site> wants to save' / 'Confirm Save As' dialog. Returns True if a dialog was present.
+    Routes, each followed by a check that the dialog really closed: Win32 messages -> UI Automation ->
+    keyboard -> alt+s. Safe to call from any thread."""
     import win32gui
-    d = dialog_hwnd()
-    if not d:
+    if not dialog_hwnd():
         return False
-    title, folder = win32gui.GetWindowText(d), downloads_dir()
-    focused = _focus_hwnd(d)
-    print(f"   [dialog] '{title}' detected (in front: {focused})")
-    if "confirm" in title.lower():                   # "file exists, replace it?" -> Yes
-        pyautogui.press("y")
-    elif not _save_via_uia(d, folder):
-        # jump to the File name box
-        pyautogui.hotkey("alt", "n")
-        # keep the suggested name, prefix the folder
-        pyautogui.press("home")
-        if folder.isascii():
-            pyautogui.write(folder + "\\", interval=0.01)
-        pyautogui.press("enter")
-    if not _dialog_gone(d):
-        print("   [dialog] still open -> pressing Save (alt+s)")
-        pyautogui.hotkey("alt", "s")
-        if not _dialog_gone(d):
-            pyautogui.press("enter")
-    print(
-        f"   [dialog] {'closed OK' if _dialog_gone(d, 1.0) else 'STILL OPEN'} (target folder: {folder})")
-    return True
+    with _DIALOG_LOCK:
+        d = dialog_hwnd()
+        if not d:
+            return True                              # the other thread just handled it
+        tries = _ATTEMPTS.get(d, 0)
+        if tries >= 3:
+            if tries == 3:
+                print(
+                    "   [dialog] 3 attempts did not close it - giving up on this dialog (save it by hand)")
+                _ATTEMPTS[d] = 4
+            return True
+        _ATTEMPTS[d] = tries + 1
+        title, folder = win32gui.GetWindowText(d), downloads_dir()
+        focused = _focus_hwnd(d)
+        print(
+            f"   [dialog] '{title}' detected (in front: {focused}, attempt {tries + 1}, target folder: {folder})")
+        if "confirm" in title.lower():               # "file exists, replace it?" -> Yes
+            pyautogui.press("y")
+            print(
+                f"   [dialog] {'closed OK' if _dialog_gone(d, 1.5) else 'STILL OPEN'} (confirm)")
+            return True
+        routes = (("win32", lambda: _save_via_win32(d, folder)),
+                  ("uia", lambda: _save_via_uia(d, folder)),
+                  ("keyboard", lambda: _save_via_keys(folder)),
+                  ("alt+s", lambda: (pyautogui.hotkey("alt", "s"), True)[1]))
+        for name, route in routes:
+            try:
+                ok = route()
+            except Exception as ex:
+                print(f"   [dialog] {name} route failed: {ex}")
+                continue
+            if ok and _dialog_gone(d, 2.5):
+                print(f"   [dialog] closed OK via {name}")
+                return True
+            print(
+                f"   [dialog] {name} route did not close it, trying the next one")
+        print("   [dialog] STILL OPEN after all routes")
+        return True
+
+
+class DialogWatcher(threading.Thread):
+    """Background thread for DOWNLOAD tasks: handles the Save dialog the moment it opens, whatever the main
+    thread is doing (waiting for the LLM, reading the page, sleeping). Sites like VLC start the download by
+    themselves after a few seconds, so the dialog pops up at a random moment, not after a click."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.stop_flag = threading.Event()
+
+    def run(self):
+        # UI Automation needs COM initialised in every thread
+        _com_init()
+        while not self.stop_flag.is_set():
+            try:
+                if dialog_hwnd():
+                    handle_save_dialog()
+            except Exception as ex:
+                print(f"   [dialog] watcher error: {ex}")
+            self.stop_flag.wait(0.4)
 
 
 DOWNLOADISH = re.compile(
@@ -1108,6 +1218,8 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
     prev_sig, unchanged = None, 0
     # set after open_url: the title must show this word
     nav_brand, nav_checks = "", 0
+    # set after open_app: the front window title should show the app name -> the CODE verifies the step
+    nav_app = ""
     # set after a submitted query: the title must show it -> the CODE verifies the step (no LLM call)
     pending_query = ""
     plan_txt = "\n".join(
@@ -1130,9 +1242,35 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
             if done:
                 raise Finished(dl.describe(done))
 
+        if (nav_app and re.match(r"\s*(open|launch|start)\b", goal, re.I)
+                and not re.search(r"\b(and|then|navigate|search|play|type|click)\b", goal, re.I)):
+            words = re.findall(r"\w{3,}", nav_app)
+            t_w0, shown_title = time.time(), ""
+            while time.time() - t_w0 < APP_WAIT:     # the app needs a moment to show its window
+                check_limits(ctx)
+                cur = _front_title()
+                if words and any(w in cur.lower() for w in words):
+                    shown_title = cur
+                    break
+                time.sleep(0.4)
+            # only try once; otherwise fall back to the normal read
+            nav_app = ""
+            if shown_title:
+                emit(ctx, event="verified", step=i + 1, goal=goal,
+                     evidence=shown_title, window=shown_title)
+                ctx.obs_cache = None
+                return True, shown_title
+
         t_a = time.time()
         if n == 1 and ctx.obs_cache is not None:     # nothing happened since the last step ended: reuse that read
             title, raw, shown, thin = ctx.obs_cache
+        elif (n == 1 and i == 0 and not BROWSER_MODE and not history
+              and re.match(r"\s*(open|launch|start)\b", goal, re.I)):
+            # nothing to read before the app / site is open and the model's move is open_app / open_url anyway:
+            # skip the screen read (it would end in the ~60-70s Moondream vision fallback)
+            title, raw, shown, thin = _front_title(), [], [], False
+            print(
+                "   [observe] first step is 'open ...': nothing to read yet, skipping the screen read")
         else:
             title, raw, shown, thin = observe(ctx.task)
         ctx.obs_cache = None
@@ -1241,6 +1379,11 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
                     note += " | Save As dialog handled by code"
         t_act = time.time() - t_c
         print("      ->", note)
+        if kind == "open_app" and not note.startswith(("BLOCKED", "FAILED")):
+            app_name = str(a.get("name") or a.get("app")
+                           or a.get("app_name") or "").lower()
+            if app_name and not any(b in app_name for b in BROWSERS):
+                nav_app = app_name
         if kind == "open_url" and not note.startswith(("BLOCKED", "FAILED")):
             nav_brand, nav_checks = site_brand(
                 a.get("url") or a.get("text") or ""), 0
@@ -1284,6 +1427,12 @@ def run_task(task: str, file_hint: str = "", on_event=None, confirm=None, ask=No
         r"\b(youtube|google|gmail|github|reddit|website|https?://|www\.)|\.com\b", task.lower()))
     t_start = time.time()
     emit(ctx, event="start", task=task)
+    _com_init()
+    watcher = None
+    if ctx.dl:                                       # download task: a Save dialog can appear at any moment
+        _ATTEMPTS.clear()
+        watcher = DialogWatcher()
+        watcher.start()
     steps: list[str] = []
     done_steps: list[str] = []
     status, summary, evidence, question = "failed", "", "", ""
@@ -1367,6 +1516,8 @@ def run_task(task: str, file_hint: str = "", on_event=None, confirm=None, ask=No
     except Exception as ex:
         status, summary = "failed", f"error: {ex}"
 
+    if watcher:
+        watcher.stop_flag.set()
     remember(task, steps, status == "success", summary)
     emit(ctx, event="finished", status=status, summary=summary)
     return {"status": status, "summary": summary, "question": question,
