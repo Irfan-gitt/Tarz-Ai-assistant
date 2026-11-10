@@ -58,7 +58,7 @@ WINDOW = 8  # how many recent messages every node sees
 def web_agent(task: str, url: str = "", file_hint: str = "") -> str:
     """Do a task on websites in the Brave browser like a human: search, click, read, fill forms, download. For a download give file_hint (part of the file name). Returns DONE or FAILED with the reason."""
     try:
-        from Tools.brave_agent import run
+        from Tools.web_agent import run
     except ImportError as e:
         return f"Error: brave_agent.py is not importable ({e}). Put it in Tools/."
     return run(task, url, file_hint)
