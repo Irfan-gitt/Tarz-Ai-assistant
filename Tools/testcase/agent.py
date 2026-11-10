@@ -23,6 +23,9 @@ How it behaves like a person:
   * time limit + cancel switch + progress events for the host system
 """
 
+from screen_layer import open_app, wait, expose, compact, read_text, move_to, El, try_to_expose_data
+# temperature 0, JSON-friendly
+from config_settings.config import CLASSIFY_LLMS
 import os
 import sys
 import json
@@ -39,16 +42,24 @@ from typing import Callable, Optional
 
 import pyautogui
 import pyperclip
-import groq
-from groq import Groq
 from dotenv import load_dotenv
 
-from screen_layer import open_app, wait, expose, compact, read_text, move_to, El, try_to_expose_data
+# project root (the folder that holds config_settings/ and Tools/) must be importable
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")))
+try:
+    # <- adjust if your file lives elsewhere
+    from config_settings.llm_gateway import get_gateway, AllModelsFailed
+except ImportError:
+    from config_settings.llm_gateway import get_gateway, AllModelsFailed
+
 
 load_dotenv()
 pyautogui.PAUSE = 0.02          # default is 0.1s after EVERY pyautogui call
 
-MODEL = "openai/gpt-oss-120b"
+# priority list; the gateway rotates keys + falls back
+AGENT_LLMS = CLASSIFY_LLMS
+AGENT_MAX_TOKENS = 1200
 MAX_ACTIONS_PER_STEP = 10
 MAX_REPLANS = 2
 # this many "screen did NOT change" in a row -> step fails
@@ -59,8 +70,6 @@ MAX_RETYPE = 2
 MAX_SUBMITS = 3
 TRACE_FILE = "agent_trace.jsonl"
 MEMORY_FILE = "agent_memory.json"
-# retries are handled (and shown) in llm()
-client = Groq(api_key=os.getenv("GROQ_API_KEY"), max_retries=0)
 
 # Seconds to wait AFTER an action before the screen is read again (pages need time to load).
 # Slow PC / slow internet? Set AGENT_SETTLE_SCALE=1.5 (or 2) in your .env instead of editing this.
@@ -140,6 +149,7 @@ Rules:
 - Only include "open the app" as a step if the task needs an app. No filler steps.
 - For a web task, "Open <site> (its page title visible)" is one step - the agent opens URLs directly,
   no address-bar typing. Then search/click on the site.
+- Typing a query with Enter already runs the search. Never add a separate "click Search button" step.
 - If the task is to DOWNLOAD a file, the last step is "start the download" (click the download
   control / confirm Save). The code verifies the file on disk by itself.
 - If told which steps are already done and what failed, return ONLY the remaining steps,
@@ -227,6 +237,8 @@ class Ctx:
     answers: list = field(default_factory=list)
     # last read, reused when nothing happened since
     obs_cache: Optional[tuple] = None
+    # every window title seen during the run (used by the final sanity check)
+    titles: list = field(default_factory=list)
 
 
 class Finished(Exception):
@@ -272,45 +284,69 @@ def check_limits(ctx: Ctx) -> None:
 LLM_STATS = {"in": 0, "out": 0, "rl": 0.0}
 
 
-def _retry_after(e) -> float:
-    try:
-        return min(max(float(e.response.headers.get("retry-after", 5)), 1.0), 30.0) + 0.5
-    except Exception:
-        return 6.0
+def _msg_text(r) -> str:
+    c = getattr(r, "content", "") or ""
+    if isinstance(c, str):
+        return c
+    return "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in c)
+
+
+def _parse_json(text: str):
+    """First JSON object in the text, else a JSON array wrapped as {"steps": [...]}. None if neither parses."""
+    text = (text or "").replace("```json", "```")
+    for pat in (r"\{.*\}", r"\[.*\]"):
+        m = re.search(pat, text, re.S)
+        if not m:
+            continue
+        try:
+            obj = json.loads(m.group(0))
+        except Exception:
+            continue
+        return obj if isinstance(obj, dict) else {"steps": obj}
+    return None
 
 
 def llm(system: str, user: str, effort: str = "medium") -> dict:
-    """One model call. Rate limits are handled HERE and printed: the SDK's silent retries looked like a slow model."""
+    """One model call through the TARZ gateway: least-loaded key, per-key cooldowns, model fallback."""
+    from langchain_core.messages import SystemMessage, HumanMessage
+    gw = get_gateway()
+    messages = [SystemMessage(content=system), HumanMessage(content=user)]
+    est = (len(system) + len(user)) // 4 + AGENT_MAX_TOKENS // 2
     LLM_STATS.update({"in": 0, "out": 0, "rl": 0.0})
-    for _ in range(5):
+    budget = [AGENT_MAX_TOKENS]
+
+    def call(name, settings, key):
+        kw = {}
+        if settings["provider"] == "groq":           # these kwargs are Groq-specific
+            kw["max_tokens"] = budget[0]
+            if "gpt-oss" in settings.get("model", ""):
+                kw["reasoning_effort"] = effort
+        return gw.client(name, key).invoke(messages, **kw)
+
+    for attempt in range(3):
         try:
-            r = client.chat.completions.create(
-                model=MODEL,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": user}],
-                temperature=0.1,
-                max_completion_tokens=3000,          # gpt-oss reasons first
-                reasoning_effort=effort,
-            )
-        except groq.RateLimitError as e:
-            w = _retry_after(e)
-            LLM_STATS["rl"] += w
-            print(
-                f"   [llm] RATE LIMITED by Groq - waiting {w:.0f}s (too many tokens per minute, not a browser problem)")
-            time.sleep(w)
+            r = gw.run(AGENT_LLMS, call, est_tokens=est)
+        except AllModelsFailed as e:
+            print(f"   [llm] all models/keys failed: {str(e)[:300]}")
+            time.sleep(3)
             continue
-        except (groq.APIConnectionError, groq.APIStatusError) as e:
-            print(f"   [llm] API error, retrying: {e}")
-            time.sleep(2)
-            continue
-        u = getattr(r, "usage", None)
-        LLM_STATS["in"] += getattr(u, "prompt_tokens", 0) or 0
-        LLM_STATS["out"] += getattr(u, "completion_tokens", 0) or 0
-        text = r.choices[0].message.content or ""
-        try:
-            return json.loads(re.search(r"\{.*\}", text, re.S).group(0))
-        except Exception:
-            print("   (bad JSON, retrying)")
+        u = getattr(r, "usage_metadata", None) or {}
+        LLM_STATS["in"], LLM_STATS["out"] = u.get(
+            "input_tokens", 0), u.get("output_tokens", 0)
+        text = _msg_text(r)
+        obj = _parse_json(text)
+        if obj is None:                              # some reasoning models leave the answer in a side field
+            extra = getattr(r, "additional_kwargs", {}) or {}
+            obj = _parse_json(str(extra.get("reasoning_content")
+                              or extra.get("reasoning") or ""))
+        if obj is not None:
+            return obj
+        meta = getattr(r, "response_metadata", {}) or {}
+        finish = meta.get("finish_reason")
+        print(f"   [llm] unusable reply from {meta.get('model_name') or meta.get('model') or '?'} "
+              f"(finish={finish}, {LLM_STATS['out']} out tokens): {text[:200]!r}")
+        if finish == "length":                       # ran out of tokens while reasoning: give it more room
+            budget[0] = min(budget[0] * 2, 4000)
     return {}
 
 
@@ -330,14 +366,22 @@ BROWSERS = {   # name -> (possible exe paths, text that appears in the window ti
     "edge": ([rf"{_PF86}\Microsoft\Edge\Application\msedge.exe",
               rf"{_PF}\Microsoft\Edge\Application\msedge.exe"], "Edge"),
 }
+FOCUS_KEYS = {"/", "ctrl+k", "ctrl+l", "esc",
+              "escape", "tab"}   # change focus, not the screen
 PAGE_ROLES = {"Button", "Hyperlink", "Edit", "ListItem", "MenuItem", "TabItem", "CheckBox",
               "RadioButton", "ComboBox", "SplitButton", "TreeItem", "Image", "Text"}
-# what the MODEL sees; `find` can still search everything
-MAX_VISIBLE, MAX_BELOW, MAX_ABOVE = 60, 10, 5
+# roles that are mostly noise for the model: shown only in small numbers
+NOISE_ROLES = {"Text", "Image"}
+MAX_NOISE = 5
+# what the MODEL sees; `find` can still search everything (was 60 / 10 / 5)
+MAX_VISIBLE, MAX_BELOW, MAX_ABOVE = 25, 3, 2
+# element names are cut to this many chars (was 80)
+NAME_LEN = 50
 BROWSER_BUDGET = 3.0              # max seconds spent reading one page's element tree
 OPEN_WAIT = 1.2
 BROWSER, BROWSER_EXE, TITLE_MARK = "brave", None, "Brave"
 BROWSER_MODE = False              # True once the agent works inside a browser
+WEB_TASK = False                  # the task is about a website / browser
 # page viewport (l, t, r, b) of the last browser read
 _VP = None
 
@@ -462,7 +506,7 @@ def observe_browser(h, task: str = ""):
             if not vp.left <= cx <= vp.right:
                 continue
             where = "above" if cy < vp.top else "below" if cy > vp.bottom else "visible"
-            el = El(role, name[:80], cx, cy, where)
+            el = El(role, name[:NAME_LEN], cx, cy, where)
             try:
                 # lets refresh() re-read ONE element, not the whole page
                 el._info = info
@@ -491,8 +535,16 @@ def observe_browser(h, task: str = ""):
                 seen.add(k)
                 out.append(e)
         return out
-    shown = uniq(vis)[:MAX_VISIBLE] + \
-        uniq(below)[:MAX_BELOW] + uniq(above)[:MAX_ABOVE]
+
+    def trim(lst, cap):
+        """Interactive elements first; Text/Image only in small numbers (they eat most of the tokens)."""
+        lst = uniq(lst)
+        core = [e for e in lst if e.role not in NOISE_ROLES]
+        noise = [e for e in lst if e.role in NOISE_ROLES]
+        return core[:cap] + noise[:min(MAX_NOISE, max(cap - len(core), 0) or MAX_NOISE)]
+
+    shown = trim(vis, MAX_VISIBLE) + trim(below,
+                                          MAX_BELOW) + trim(above, MAX_ABOVE)
     for i, e in enumerate(shown):
         e.id = i
     return title, raw, shown, not raw
@@ -528,6 +580,11 @@ def observe(task: str):
             return title, raw, shown, thin
         print("   [observe] page content not readable yet, re-reading in 1s...")
         time.sleep(1.0 * SETTLE_SCALE)
+    if WEB_TASK and not BROWSER_MODE and not front_browser_hwnd():
+        # nothing to read yet and the model's first move is open_url anyway: do NOT run the ~60s vision fallback
+        print(
+            "   [observe] web task, browser not open yet -> skipping vision, the model will open it")
+        return _front_title(), [], [], False
     data = expose(task=task, compact_els=False)
     raw = data["elements"]
     shown = compact(raw, task, "", data["window"]
@@ -547,6 +604,11 @@ def evidence_ok(ev: str, title: str, raw: list) -> bool:
     """Grounded check: the cited text must really exist on screen."""
     ev = (ev or "").strip().lower()
     if len(ev) < 3:
+        return False
+    # a bare browser name / blank tab proves nothing about the step ("New Tab - Brave" is on screen the whole time)
+    bare = re.sub(
+        r"\s*[-\u2013\u2014]\s*(brave|google chrome|microsoft edge|edge)\s*$", "", ev).strip()
+    if bare in {"", "new tab", "brave", "google chrome", "edge", "microsoft edge", "untitled", "about:blank"}:
         return False
     return ev in title.lower() or any(ev in e.name.lower() for e in raw)
 
@@ -802,8 +864,16 @@ def plan(task: str, done: list[str] | None = None, screen: str = "",
     if screen:
         user += f"CURRENT SCREEN:\n{screen}\n"
     user += "Return the remaining steps as JSON."
-    steps = llm(PLAN_SYSTEM, user, "low").get("steps") or []
-    return [str(s) for s in steps][:8]
+    for effort in ("low", "medium"):
+        out = llm(PLAN_SYSTEM, user, effort)
+        steps = out.get("steps") or out.get("plan") or out.get("tasks") or []
+        steps = [str(x.get("step") or x.get("description") or x)
+                 if isinstance(x, dict) else str(x) for x in steps]
+        if steps:
+            return steps[:8]
+        print(
+            f"   [plan] no steps in the reply ({effort} effort): {str(out)[:200]!r}")
+    return []
 
 
 # --------------------------------------------------------------------------
@@ -819,7 +889,7 @@ def refresh(e):
     if info is not None and _VP:                     # fast path: one element, a few ms instead of the whole page
         try:
             r = info.rectangle
-            if r.right - r.left < 3 or r.bottom - r.top < 3 or (info.name or "").strip()[:80] != e.name:
+            if r.right - r.left < 3 or r.bottom - r.top < 3 or (info.name or "").strip()[:NAME_LEN] != e.name:
                 return None
             cx, cy = (r.left + r.right) // 2, (r.top + r.bottom) // 2
             fresh = copy(e)
@@ -846,29 +916,45 @@ def refresh(e):
     return best
 
 
+# AGENT_HITTEST=0 turns the overlay check off
+HITTEST = os.getenv("AGENT_HITTEST", "1") != "0"
+_OVERLAY_WORDS = re.compile(r"cookie|consent|dialog|pop-?up|banner|modal|notification|privacy|dismiss|"
+                            r"sign in|update available", re.I)
+_OVERLAY_TYPES = {"Menu", "MenuItem", "ToolTip"}
+
+
 def hit_test(e):
-    """What is REALLY under the cursor? Returns None if it is the target (or we cannot tell),
-    else a short description of what covers it (cookie banner, popup, overlay...)."""
+    """Is a REAL overlay (menu, cookie banner, dialog, popup) on top of the target?
+    Returns None when the target is clickable or we cannot tell, else a short description of the overlay.
+    Chromium's hit-test often returns an unnamed generic node that is NOT inside the target even though
+    the click lands fine, so unnamed markup is never treated as a blocker: only positively-identified overlays."""
+    if not HITTEST:
+        return None
     try:
         from ctypes.wintypes import tagPOINT
         from pywinauto.uia_defines import IUIA
         from pywinauto.uia_element_info import UIAElementInfo
-        info = UIAElementInfo(IUIA().iuia.ElementFromPoint(
+        cur = UIAElementInfo(IUIA().iuia.ElementFromPoint(
             tagPOINT(int(e.x), int(e.y))))
-        names, cur = [], info
-        for _ in range(6):                           # the element itself + its ancestors
-            names.append((cur.name or "").strip())
-            cur = cur.parent
-            if cur is None:
+        chain = []
+        # the element itself + its ancestors, up to the page
+        for _ in range(8):
+            if cur is None or cur.control_type == "Document":
                 break
+            chain.append((cur.control_type, (cur.name or "").strip()))
+            cur = cur.parent
     except Exception:
         # hit-testing unavailable: never block because of it
         return None
     target = (e.name or "").strip().lower()
-    low = [n.lower() for n in names if n]
-    if not target or any(target in n or (len(n) >= 3 and n in target) for n in low):
+    names = [n.lower() for _t, n in chain if n]
+    if not target or any(target in n or (len(n) >= 3 and n in target) for n in names):
+        # the target (or something inside it) is under the cursor
         return None
-    return " > ".join(f'"{n[:40]}"' for n in names[:3] if n) or "an unnamed element"
+    for t, n in chain:
+        if t in _OVERLAY_TYPES or (n and _OVERLAY_WORDS.search(n)):
+            return f'{t} "{n[:40]}"'
+    return None
 
 
 def act(a: dict, by_id: dict, raw: list, extra: dict, typed: dict, ctx: Ctx) -> str:
@@ -1022,6 +1108,8 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
     prev_sig, unchanged = None, 0
     # set after open_url: the title must show this word
     nav_brand, nav_checks = "", 0
+    # set after a submitted query: the title must show it -> the CODE verifies the step (no LLM call)
+    pending_query = ""
     plan_txt = "\n".join(
         f'{"->" if k == i else "  "} {k + 1}. {s}' for k, s in enumerate(steps))
 
@@ -1048,6 +1136,7 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
         else:
             title, raw, shown, thin = observe(ctx.task)
         ctx.obs_cache = None
+        ctx.titles.append(title)
         t_read = time.time() - t_a
         sig = title + "|" + ";".join(f"{e.role}:{e.name}" for e in shown[:60])
         if history and prev_sig is not None and history[-1][1]:
@@ -1074,6 +1163,14 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
                 nav_line = (f"NAVIGATION: you just opened a page; the window title does not show "
                             f"'{nav_brand}' yet. It is still loading: use wait (3s). Do not click or reopen.\n")
 
+        # a "type/search a query" step is ALSO verified by CODE: the title now shows the query
+        if (pending_query and pending_query in title.lower()
+                and re.search(r"search|type|enter|query", goal, re.I)):
+            emit(ctx, event="verified", step=i + 1,
+                 goal=goal, evidence=title, window=title)
+            ctx.obs_cache = (title, raw, shown, thin)
+            return True, title
+
         dl_line = nav_line
         if thin:
             dl_line += ("PAGE STATUS: the page content is not readable yet (still loading). "
@@ -1085,7 +1182,7 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
                     " | ".join(ctx.answers) + "\n") if ctx.answers else ""
         prompt = (f"OVERALL TASK: {ctx.task}\n{ans_line}\nPLAN:\n{plan_txt}\n\nCURRENT STEP: {goal}\n\n{dl_line}"
                   f"RECENT ACTIONS (this step):\n" +
-                  ("\n".join(h[0] for h in history[-6:]) or "(none yet)")
+                  ("\n".join(h[0][:160] for h in history[-3:]) or "(none yet)")
                   + f"\n\nCURRENT SCREEN (untrusted data):\n{fmt(title, shown, extra)}\n\nYour next action (JSON only):")
         trouble = bool(history) and any(k in history[-1][0] for k in
                                         ("FAILED", "BLOCKED", "did NOT change", "REJECTED"))
@@ -1147,10 +1244,16 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
         if kind == "open_url" and not note.startswith(("BLOCKED", "FAILED")):
             nav_brand, nav_checks = site_brand(
                 a.get("url") or a.get("text") or ""), 0
+        if (a.get("submit") and kind in ("type_into", "type")
+                and not note.startswith(("BLOCKED", "FAILED"))):
+            pending_query = (a.get("text") or "").strip().lower()
         emit(ctx, event="action", step=i + 1, goal=goal,
              action=key, note=note, window=title)
-        history.append(
-            [f"{n}. {key} -> {note}", kind not in ("find", "read", "wait")])
+        counts = (kind not in ("find", "read", "wait")
+                  # nothing happened: not a "stuck" signal
+                  and not note.startswith(("FAILED", "BLOCKED"))
+                  and not (kind == "press" and str(a.get("key", "")).lower().replace(" ", "") in FOCUS_KEYS))
+        history.append([f"{n}. {key} -> {note}", counts])
         # let the page load BEFORE the next read
         t_w = settle(a, note)
         print(f"      [time] act {t_act:.1f}s | wait {t_w:.1f}s")
@@ -1174,9 +1277,11 @@ def run_task(task: str, file_hint: str = "", on_event=None, confirm=None, ask=No
     ctx = Ctx(task=task, on_event=on_event, confirm=confirm, ask=ask, cancel=cancel,
               deadline=time.time() + max_seconds,
               dl=Downloads(file_hint) if ("download" in task.lower() or file_hint) else None)
-    global BROWSER_MODE
+    global BROWSER_MODE, WEB_TASK
     BROWSER_MODE = False
     set_browser(detect_browser(task))
+    WEB_TASK = bool(any(b in task.lower() for b in BROWSERS) or re.search(
+        r"\b(youtube|google|gmail|github|reddit|website|https?://|www\.)|\.com\b", task.lower()))
     t_start = time.time()
     emit(ctx, event="start", task=task)
     steps: list[str] = []
@@ -1237,7 +1342,18 @@ def run_task(task: str, file_hint: str = "", on_event=None, confirm=None, ask=No
             status = "failed"
             summary = f"steps finished but no new finished file appeared in {ctx.dl.folder}"
         else:
-            status, summary = "success", f"All {len(steps)} steps verified on screen."
+            # sanity check: a search task whose quoted query never appeared in ANY window title was not really done
+            missing = []
+            if WEB_TASK and os.getenv("AGENT_QUERY_GUARD", "1") != "0" and re.search(
+                    r"\b(search|look up|find)\b", task, re.I):
+                missing = [q for q in re.findall(r'["\u201c]([^"\u201d]{3,})["\u201d]', task)
+                           if not any(q.lower() in t.lower() for t in ctx.titles)]
+            if missing:
+                status = "failed"
+                summary = (f'steps were marked done, but "{missing[0]}" from the task never appeared in any '
+                           "window title - it was probably not really done")
+            else:
+                status, summary = "success", f"All {len(steps)} steps verified on screen."
 
     except Finished as f:
         status, summary, evidence = "success", f"Download verified on disk: {f}", str(
