@@ -1,3 +1,5 @@
+from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
+from langchain_core.messages import ToolMessage
 import keyboard
 import threading
 from datetime import datetime
@@ -82,8 +84,100 @@ ALL_TOOLS = [
 ]
 
 
-class State(TypedDict):
+AUTONOMOUS_TOOLS = [
+    computer_agent,
+]
+
+
+SINGLE_TOOLS = [
+
+    click, type_text, press_key, open_app, use_shortcut, read_screen, clipboard, wait,
+
+    volume_control, set_alarm, set_timer,
+    send_email, read_emails, search_emails,
+    create_event, list_events, delete_event,
+    wether_app, rt_data, translate, news_update,
+    media_play_pause, media_previous_track, media_next_track,
+]
+
+
+DEDICATED_TOOLS = [
+    spotify_play_playlist, spotify_search_and_play,
+    whatsapp_send_message, whatsapp_call,
+    discord_send_message, discord_toggle_mute, discord_toggle_deafen,
+    discord_answer_call, discord_decline_call,
+    telegram_message_user,
+]
+
+TOOLS_BY_ROUTE = {
+    "autonomous": AUTONOMOUS_TOOLS,
+    "single": SINGLE_TOOLS,
+    "dedicated": DEDICATED_TOOLS,
+}
+
+
+class Statex(TypedDict):
     pass
+
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    route: str
+
+
+def _bind_and_call(messages, tools):
+    # TODO: adjust to your gateway's signature, this is the one line I can't see
+    return get_gateway().invoke(TOOL_CALLING_LLMS, messages, tools=tools)
+
+
+def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int) -> dict:
+    now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
+    sys_msg = SystemMessage(
+        content=f"{SYSTEM}\n\n{branch_prompt}\nCurrent date/time: {now}")
+
+    tools = [*tools, ask_user]
+    tool_map = {t.name: t for t in tools}
+
+    local = [sys_msg, *state["messages"][-WINDOW:]]
+
+    for _ in range(max_steps):
+        check_cancel()
+        try:
+            ai = _bind_and_call(local, tools)
+        except AllModelsFailed:
+            return {"messages": [AIMessage(content="All my models are down right now, try again in a bit.")]}
+
+        local.append(ai)
+        calls = getattr(ai, "tool_calls", None) or []
+        if not calls:
+            return {"messages": [AIMessage(content=ai.content)]}  # done
+
+        for call in calls:
+            check_cancel()
+            name, args = call["name"], call["args"]
+
+            if name == "ask_user":
+                # pause graph, wait for the user's answer, then continue
+                answer = interrupt(
+                    {"question": args["question"], "pending": args.get("pending", "")})
+                local.append(ToolMessage(content=str(
+                    answer), tool_call_id=call["id"]))
+                continue
+
+            tool_fn = tool_map.get(name)
+            if tool_fn is None:
+                result = f"Error: tool '{name}' is not available here."
+            else:
+                try:
+                    result = tool_fn.invoke(args)
+                except TaskCancelled:
+                    raise
+                except Exception as e:
+                    result = f"Error running {name}: {e}"
+            local.append(ToolMessage(content=str(
+                result), tool_call_id=call["id"]))
+
+    return {"messages": [AIMessage(content="I hit my step limit before finishing. Check what got done and tell me if you want me to continue.")]}
 
 
 def listen():
@@ -113,16 +207,16 @@ def orchastration():
     return
 
 
-def tools_dedicated():
-    return
+def single_tool(state: State):
+    return run_tool_agent(state, SINGLE_TOOLS, SINGLE_PROMPT, max_steps=5)
 
 
-def agent_autonomous():
-    return
+def tools_dedicated(state: State):
+    return run_tool_agent(state, DEDICATED_TOOLS, DEDICATED_PROMPT, max_steps=4)
 
 
-def single_tool():
-    return
+def agent_autonomous(state: State):
+    return run_tool_agent(state, AUTONOMOUS_TOOLS, AUTONOMOUS_PROMPT, max_steps=5)
 
 
 def human_in_the_loop():
