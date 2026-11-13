@@ -5,9 +5,7 @@ picks the API key that is LEAST LOADED right now (not "always key #1 until it di
 and models that are cooling down, waits briefly when everything is busy, then falls back to the
 next model. Unexpected errors (bugs) are raised, not swallowed.
 
-What is new compared to the first version
-  * Load spreading: keys are ordered by tokens used in the last 60s (then least-recently-used),
-    so 3 keys really give ~3x the tokens-per-minute budget.
+  * Load spreading: keys are ordered by tokens used in the last 60s (then least-recently-used).
   * Proactive limits: optional per-MODEL tpm/rpm (see MODEL_LIMITS in config). A key that would go
     over its budget is skipped BEFORE the call, so you do not eat a 429 + cooldown at all.
   * Right cooldown scope: a 429 blocks (key, model), not the whole key. A 401/402/403 blocks the key.
@@ -31,8 +29,9 @@ SERVER_COOLDOWN = 30.0
 DEAD_COOLDOWN = 3600.0
 USAGE_WINDOW = 60.0            # providers count tokens per minute
 DEFAULT_EST_TOKENS = 1500      # guess for one call when the caller gives none
-# longest we will sleep for a key to free up before falling back
-MAX_WAIT = 20.0
+# Longest we will sleep for a key to free up before falling back.
+# Kept short: this is a voice assistant, silence feels broken.
+MAX_WAIT = 4.0
 
 
 class LLMError(Exception):
@@ -387,6 +386,16 @@ class LLMGateway:
         return self.run(models, call, est_tokens=est_tokens or _estimate_tokens(messages))
 
     # ---- debugging ----
+    def _label(self, scope_key: tuple) -> str:
+        """Readable name for a cooldown entry. Shows key NUMBER (#1, #2), never any part of the key itself."""
+        parts = []
+        for i, p in enumerate(scope_key):
+            if i == 2 and scope_key[0] in ("auth", "rate") and p != "*":
+                keys = list(self._api_keys.get(scope_key[1], ()))
+                p = f"#{keys.index(p) + 1}" if p in keys else "?"
+            parts.append(str(p))
+        return " ".join(parts)
+
     def stats(self) -> dict:
         """Tokens used in the last 60s per (provider, key #, model) and active cooldowns."""
         now = self._clock()
@@ -395,10 +404,10 @@ class LLMGateway:
             for (provider, key, model_id), q in self._usage.items():
                 total = sum(tok for t, tok in q if t > now - USAGE_WINDOW)
                 if total:
-                    idx = (list(self._api_keys.get(provider, ())).index(key) + 1
-                           if key in self._api_keys.get(provider, ()) else "*")
+                    keys = list(self._api_keys.get(provider, ()))
+                    idx = keys.index(key) + 1 if key in keys else "*"
                     usage[f"{provider}#{idx}:{model_id}"] = total
-            blocked = {" ".join(str(p)[:12] if i == 2 else str(p) for i, p in enumerate(k)): round(v - now, 1)
+            blocked = {self._label(k): round(v - now, 1)
                        for k, v in self._blocked.items() if v > now}
         return {"tokens_last_60s": usage, "cooling_down": blocked}
 
