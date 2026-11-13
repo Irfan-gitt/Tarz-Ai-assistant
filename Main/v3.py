@@ -1,4 +1,4 @@
-from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
+
 from langchain_core.messages import ToolMessage
 import keyboard
 import threading
@@ -23,7 +23,8 @@ from langsmith import traceable
 from config_settings.guardrails import Guardrails, jev_ask, restore
 from config_settings.jev_gate import jev_gate
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
-from config_settings.config import TOOL_CALLING_LLMS, PLAIN_LLMS
+from config_settings.config import TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS
+from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
@@ -199,8 +200,36 @@ def chat(messages):
     return get_gateway().invoke(PLAIN_LLMS, messages).content
 
 
-def retrieval():
-    return
+def retrieval(state: dict) -> dict:
+    users = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+    # first turn of the session
+    first_message = len(state["messages"]) == 1
+    ctx = build_memory_context(users, include_followups=first_message)
+    return {"memory_ctx": ctx.text, "followup_ids": ctx.followup_ids}
+
+
+_last_save: threading.Thread | None = None
+
+
+def memory_extraction(state: dict) -> dict:
+    global _last_save
+    if state.get("blocked"):
+        return {}
+
+    masked_reply = state.get("final") or " ".join(
+        r for r in state.get("results", []) if r)
+    masked_user = next((m.content for m in reversed(state["messages"])
+                        if isinstance(m, HumanMessage)), "")
+    if not masked_user or not masked_reply:
+        return {}
+
+    # skip pure single-tool turns (alarms, volume...), nothing worth remembering
+    routes = {p["route"] for p in state.get("plan", [])}
+    if routes and routes == {"single"}:
+        return {}
+
+    _last_save = save_imp_context_background(masked_user, masked_reply)
+    return {}
 
 
 def orchastration():
@@ -235,4 +264,8 @@ def main():
     return
 
 
-print(chat(listen()))
+if __name__ == "__main__":
+    state = {"messages": [HumanMessage(content="what do I have tomorrow")]}
+    out = retrieval(state)
+    print(out["memory_ctx"])
+    print("followup ids:", out["followup_ids"])
