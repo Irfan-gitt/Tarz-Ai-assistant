@@ -46,7 +46,7 @@ import requests
 from qdrant_client import QdrantClient, models
 
 from config_settings.config import API_KEYS, CLASSIFY_LLMS, EMBEDDING_MODELS, MODEL_CONFIGS
-from config_settings.guardrails import VAULT_PATH, Guardrails, jev_ask
+from config_settings.guardrails import Guardrails, jev_ask
 from config_settings.llm_gateway import get_gateway
 
 # --------------------------------------------------------------------------
@@ -99,7 +99,7 @@ DISMISS_RE = re.compile(
 # --------------------------------------------------------------------------
 # Setup
 # --------------------------------------------------------------------------
-_guard = Guardrails(ask=jev_ask, vault_path=VAULT_PATH)
+_guard = Guardrails(ask=jev_ask)
 _db_lock = threading.RLock()
 _write_lock = threading.Lock()
 
@@ -494,11 +494,25 @@ Return ONLY JSON: {{"dismiss_ids": []}}"""
     return len(ids)
 
 
+_PII_PATTERNS = [
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "<EMAIL>"),
+    (re.compile(r"\b(?:\d[ -]?){13,19}\b"), "<CARD>"),
+    (re.compile(r"(?<!\w)\+?\d[\d\s().-]{8,}\d"), "<PHONE>"),
+]
+
+
+def _mask(text: str):
+    """Last-line PII scrub. Returns (text, {}) so it replaces the old _guard.mask."""
+    text = text or ""
+    for pattern, tag in _PII_PATTERNS:
+        text = pattern.sub(tag, text)
+    return text, {}
+
+
 def save_imp_context(user_input: str, ai_reply: str) -> list[dict]:
     """Main entry point. Best-effort: never raises into the main loop."""
-    user_input, _ = _guard.mask(user_input or "")
-    ai_reply, _ = _guard.mask(ai_reply or "")
-
+    user_input, _ = _mask(user_input or "")
+    ai_reply, _ = _mask(ai_reply or "")
     with _write_lock:
         try:
             if DISMISS_RE.search(user_input):
@@ -515,13 +529,20 @@ def save_imp_context(user_input: str, ai_reply: str) -> list[dict]:
 
         saved = []
         for mem in memories:
+            if mem["importance"] <= 1 and not mem["retract"]:
+                continue
+
             try:
                 result = _store(mem, user_input)
                 if result:
                     saved.append(result)
+
             except Exception as e:
                 print(
-                    f"[memory] Could not store '{mem['text']}': {type(e).__name__}: {e}")
+                    f"[memory] Could not store '{mem['text']}': "
+                    f"{type(e).__name__}: {e}"
+                )
+
         return saved
 
 
@@ -596,7 +617,7 @@ def dismiss_followup(memory_id: str) -> None:
 # --------------------------------------------------------------------------
 def get_relevant_memories(query: str, limit: int = 5, min_importance: int = 1) -> list[dict]:
     """Active memories most related to `query`."""
-    query, _ = _guard.mask(query)
+    query, _ = _mask(query)
     vector = _embed_or_none(query)
     if vector is None:
         return []
