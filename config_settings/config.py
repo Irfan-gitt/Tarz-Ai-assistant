@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openrouter import ChatOpenRouter
-from typesafe_sdk import Choice, TypeSafeClient
 from langchain_community.embeddings import JinaEmbeddings
 
 load_dotenv()
@@ -21,8 +20,7 @@ def _keys(*names):
 
 # --- API keys: every provider exposes ALL its keys, the gateway picks one ---
 GROQ_ALL_KEYS = _keys("GROQ_API_KEY_1", "GROQ_API_KEY_2", "GROQ_API_KEY_3")
-GROQ_VISION_ALL_KEYS = _keys(
-    "GROQ_VISION_KEY_1", "GROQ_VISION_KEY_2")
+GROQ_VISION_ALL_KEYS = _keys("GROQ_VISION_KEY_1", "GROQ_VISION_KEY_2")
 GEMINI_ALL_KEYS = _keys("GEMINI_KEY_1", "GEMINI_KEY_2",
                         "GEMINI_KEY_3", "GEMINI_KEY_4", "GEMINI_KEY_5")
 OPENROUTER_ALL_KEYS = _keys("OPENROUTER_API_KEY2")
@@ -45,13 +43,16 @@ API_KEYS = {
     "jina": JINA_ALL_KEYS,
 }
 
-# per API KEY, keyed by the PROVIDER model id (not your config name)
+# Keyed by the PROVIDER model id (not your config name).
+# "shared": True = all keys of that provider share ONE bucket (Groq limits are per
+# organization). Set it to False only if your Groq keys come from different accounts.
 MODEL_LIMITS = {
-    "openai/gpt-oss-120b": {"tpm": 8000, "rpm": 30},
-    "qwen/qwen3.8-27b": {"tpm": 6000, "rpm": 30},
+    "openai/gpt-oss-120b": {"tpm": 8000, "rpm": 30, "shared": True},
+    "qwen/qwen3.8-27b": {"tpm": 6000, "rpm": 30, "shared": True},
 }
 # Retries off: the gateway, not the SDK, decides when to switch key or model.
-_FAST = {"timeout": 30, "max_retries": 0}
+# Short timeout so a voice assistant falls back quickly instead of hanging.
+_FAST = {"timeout": 12, "max_retries": 0}
 _NO_RETRY = {"max_retries": 0}
 
 # --- Every model config, one name each ---
@@ -71,8 +72,7 @@ MODEL_CONFIGS = {
     "plain_gemini": {"provider": "google", "model": "gemini-2.5-flash", "temperature": 0.6, **_FAST},
     "plain_openrouter": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0.6, **_NO_RETRY},
 
-
-    "vision_groq": {"provider": "groq_vision", "model": "qwen/qwen3.8-27b"},
+    "vision_groq": {"provider": "groq_vision", "model": "qwen/qwen3.8-27b", **_FAST},
     "vision_openrouter": {
         "provider": "openrouter",
         "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
@@ -116,8 +116,7 @@ LOCAL_MODELS = {
     "reranker": {"model": "cross-encoder/ms-marco-MiniLM-L-6-v2"},
 }
 
-# JEV
-
+# --- JEV ---
 API_KEYS["jev"] = JEV_ALL_KEYS
 MODEL_CONFIGS["jev_openrouter"] = {
     "provider": "jev", "base_url": "https://openrouter.ai/api"}
@@ -130,7 +129,8 @@ def make_llm(name, api_key):
     provider = settings["provider"]
     kwargs = {k: v for k, v in settings.items() if k != "provider"}
 
-    if provider == "groq":
+    # vision uses its own keys, same Groq client
+    if provider in ("groq", "groq_vision"):
         return ChatGroq(api_key=api_key, **kwargs)
     if provider == "google":
         return ChatGoogleGenerativeAI(google_api_key=api_key, **kwargs)
