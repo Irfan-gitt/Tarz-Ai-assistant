@@ -4,6 +4,7 @@ import keyboard
 import threading
 from datetime import datetime
 import re
+import json
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
@@ -24,7 +25,7 @@ from config_settings.guardrails import Guardrails, jev_ask, restore
 from config_settings.jev_gate import jev_gate
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
 from config_settings.config import TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS
-from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
+from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT, ORCH_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
@@ -124,6 +125,10 @@ class Statex(TypedDict):
 class State(TypedDict):
     messages: Annotated[list, add_messages]
     route: str
+    plan: list
+    step_idx: int
+    results: list
+    final: str
 
 
 def _bind_and_call(messages, tools):
@@ -232,8 +237,64 @@ def memory_extraction(state: dict) -> dict:
     return {}
 
 
-def orchastration():
-    return
+# _____________________________________ ORCHSTRATOR BRANCHES _____________________________________
+
+ROUTES = {"chat", "single", "dedicated", "autonomous"}
+MAX_PLAN_STEPS = 5
+
+
+def _make_plan(state: State) -> list:
+    tools_info = (
+        f"\n\nSingle tools: {', '.join(t.name for t in SINGLE_TOOLS)}"
+        f"\nDedicated tools: {', '.join(t.name for t in DEDICATED_TOOLS)}"
+    )
+    msgs = [SystemMessage(content=ORCH_PROMPT + tools_info),
+            *state["messages"][-WINDOW:]]
+    raw = chat(msgs)
+
+    try:
+        data = json.loads(re.search(r"\[.*\]", raw, re.S).group())
+    except Exception:
+        data = []
+
+    plan = []
+    for s in data[:MAX_PLAN_STEPS]:
+        if isinstance(s, dict) and s.get("task"):
+            route = s.get("route") if s.get("route") in ROUTES else "chat"
+            plan.append({"route": route, "task": str(s["task"])})
+
+    if not plan:  # planner failed -> just talk, never crash
+        user_text = next((m.content for m in reversed(state["messages"])
+                          if isinstance(m, HumanMessage)), "")
+        plan = [{"route": "chat", "task": user_text}]
+    return plan
+
+
+def orchastration(state: State) -> dict:
+    messages = state["messages"]
+
+    if isinstance(messages[-1], HumanMessage):
+        # new user turn -> make the plan
+        plan, idx, results = _make_plan(state), 0, []
+    else:
+        # a branch just finished -> save its result, move to next step
+        plan = state["plan"]
+        results = [*state.get("results", []), messages[-1].content]
+        idx = state["step_idx"] + 1
+
+    if idx >= len(plan):
+        return {"plan": plan, "step_idx": idx, "results": results,
+                "route": "end", "final": "\n".join(results)}
+
+    step = plan[idx]
+    out = {"plan": plan, "step_idx": idx,
+           "results": results, "route": step["route"]}
+    if len(plan) > 1:  # single-step plans already have the user's message last
+        out["messages"] = [HumanMessage(
+            content=f"[step {idx + 1}/{len(plan)}] {step['task']}")]
+    return out
+
+# _____________________________________ ORCHSTRATOR BRANCHES _____________________________________
 
 
 def single_tool(state: State):
