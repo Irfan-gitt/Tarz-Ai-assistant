@@ -493,7 +493,13 @@ def build_graph():
     g.add_edge("memory_extraction", "speak_output")
     g.add_edge("speak_output", END)
 
-    return g.compile()
+    graph = g.compile()
+    png = graph.get_graph().draw_mermaid_png()
+    with open("langgraph.png", "wb") as f:
+        f.write(png)
+    print("✅ Graph saved as langgraph.png")
+
+    return graph
 
 
 # ---------------- MAIN ----------------
