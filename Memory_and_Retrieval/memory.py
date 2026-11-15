@@ -44,7 +44,7 @@ from datetime import datetime, timedelta
 
 import requests
 from qdrant_client import QdrantClient, models
-
+from langsmith import traceable
 from config_settings.config import API_KEYS, CLASSIFY_LLMS, EMBEDDING_MODELS, MODEL_CONFIGS
 from config_settings.guardrails import Guardrails, jev_ask
 from config_settings.llm_gateway import get_gateway
@@ -509,6 +509,7 @@ def _mask(text: str):
     return text, {}
 
 
+@traceable(name="memory_save", run_type="chain")
 def save_imp_context(user_input: str, ai_reply: str) -> list[dict]:
     """Main entry point. Best-effort: never raises into the main loop."""
     user_input, _ = _mask(user_input or "")
