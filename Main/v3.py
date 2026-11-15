@@ -4,7 +4,6 @@ import keyboard
 import threading
 from datetime import datetime
 import re
-import json
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
@@ -21,11 +20,11 @@ if hasattr(sys.stderr, "reconfigure"):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 from langsmith import traceable
-from config_settings.guardrails import Guardrails, jev_ask, restore
+from config_settings.guardrails import Guardrails, jev_ask, restore, HARD, PII_RULES, TAG, restore, jev_ask
 from config_settings.jev_gate import jev_gate
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
 from config_settings.config import TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS
-from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT, ORCH_PROMPT
+from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
@@ -37,7 +36,8 @@ from Tools.Dedicated_Tools.spotify_gui import spotify_play_playlist, spotify_sea
 from Tools.Dedicated_Tools.telegram_gui import telegram_message_user
 from Tools.Dedicated_Tools.whatsapp_gui import whatsapp_send_message, whatsapp_call
 from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_toggle_mute, discord_toggle_deafen, discord_answer_call, discord_decline_call
-from Tools.Autonomous_layer.autonomous_agent import computer_agent
+from Tools.Autonomous_layer.autonomous_agent import computer_agent, set_human_hooks
+
 
 from Actions.execute_action import click, type_text, press_key, read_screen, open_app, volume_control, wether_app, use_shortcut, set_alarm, news_update, set_timer, translate, clipboard, wait
 from Memory_and_Retrieval.memory import save_imp_context_background, mark_followups_asked
@@ -122,13 +122,21 @@ class Statex(TypedDict):
     pass
 
 
-class State(TypedDict):
+class State(TypedDict, total=False):
     messages: Annotated[list, add_messages]
-    route: str
+    user_text: str
+    blocked: bool
+    memory_ctx: str
+    followup_ids: list
     plan: list
     step_idx: int
+    route: str
+    task: str
     results: list
+    last_result: str
+    last_ok: bool
     final: str
+    spoken: str
 
 
 def _bind_and_call(messages, tools):
@@ -201,8 +209,18 @@ def jev_category():
     return
 
 
-def chat(messages):
-    return get_gateway().invoke(PLAIN_LLMS, messages).content
+WINDOW = 8
+
+
+def chat(state: dict) -> dict:
+    ctx = state.get("memory_ctx", "")
+    sys_msg = SystemMessage(content=f"{SYSTEM}\n\n{ctx}" if ctx else SYSTEM)
+    try:
+        reply = get_gateway().invoke(
+            PLAIN_LLMS, [sys_msg, *state["messages"][-WINDOW:]]).content
+    except AllModelsFailed:
+        reply = "All my models are down right now, try again in a bit."
+    return {"messages": [AIMessage(content=reply)]}
 
 
 def retrieval(state: dict) -> dict:
@@ -237,64 +255,8 @@ def memory_extraction(state: dict) -> dict:
     return {}
 
 
-# _____________________________________ ORCHSTRATOR BRANCHES _____________________________________
-
-ROUTES = {"chat", "single", "dedicated", "autonomous"}
-MAX_PLAN_STEPS = 5
-
-
-def _make_plan(state: State) -> list:
-    tools_info = (
-        f"\n\nSingle tools: {', '.join(t.name for t in SINGLE_TOOLS)}"
-        f"\nDedicated tools: {', '.join(t.name for t in DEDICATED_TOOLS)}"
-    )
-    msgs = [SystemMessage(content=ORCH_PROMPT + tools_info),
-            *state["messages"][-WINDOW:]]
-    raw = chat(msgs)
-
-    try:
-        data = json.loads(re.search(r"\[.*\]", raw, re.S).group())
-    except Exception:
-        data = []
-
-    plan = []
-    for s in data[:MAX_PLAN_STEPS]:
-        if isinstance(s, dict) and s.get("task"):
-            route = s.get("route") if s.get("route") in ROUTES else "chat"
-            plan.append({"route": route, "task": str(s["task"])})
-
-    if not plan:  # planner failed -> just talk, never crash
-        user_text = next((m.content for m in reversed(state["messages"])
-                          if isinstance(m, HumanMessage)), "")
-        plan = [{"route": "chat", "task": user_text}]
-    return plan
-
-
-def orchastration(state: State) -> dict:
-    messages = state["messages"]
-
-    if isinstance(messages[-1], HumanMessage):
-        # new user turn -> make the plan
-        plan, idx, results = _make_plan(state), 0, []
-    else:
-        # a branch just finished -> save its result, move to next step
-        plan = state["plan"]
-        results = [*state.get("results", []), messages[-1].content]
-        idx = state["step_idx"] + 1
-
-    if idx >= len(plan):
-        return {"plan": plan, "step_idx": idx, "results": results,
-                "route": "end", "final": "\n".join(results)}
-
-    step = plan[idx]
-    out = {"plan": plan, "step_idx": idx,
-           "results": results, "route": step["route"]}
-    if len(plan) > 1:  # single-step plans already have the user's message last
-        out["messages"] = [HumanMessage(
-            content=f"[step {idx + 1}/{len(plan)}] {step['task']}")]
-    return out
-
-# _____________________________________ ORCHSTRATOR BRANCHES _____________________________________
+def orchastration():
+    return
 
 
 def single_tool(state: State):
@@ -309,24 +271,80 @@ def agent_autonomous(state: State):
     return run_tool_agent(state, AUTONOMOUS_TOOLS, AUTONOMOUS_PROMPT, max_steps=5)
 
 
-def human_in_the_loop():
-    return
+YES = {"y", "yes", "yeah", "yep", "ok", "sure", "do it"}
 
 
-def gaurdrails_output():
-    return
+def ask_human(question: str) -> str:
+    if VOICE_MODE:
+        speak(question)
+        return live_listen()
+    return input(f"TARZ: {question}\nYou: ")
 
 
-def speak_output():
-    return
+def human_in_the_loop(question: str) -> bool:
+    return ask_human(f"{question} (yes/no)").strip().lower() in YES
+
+
+_SECRET = dict(PII_RULES)["SECRET"]
+SAFE_REPLY = "I can't say that one."
+
+
+def _hard_hit(text: str) -> bool:
+    return any(rx.search(text) for patterns in HARD.values() for rx in patterns)
+
+
+def gaurdrails_output(state: dict) -> dict:
+    reply = state.get("final") or ""
+    if not reply:
+        return {}
+
+    blocked = False
+    # 1. secrets never leave
+    reply = _SECRET.sub("[hidden]", reply)
+
+    if _hard_hit(reply):                                 # 2. free regex first
+        labels = jev_ask(reply[:2000])                   # 3. jev only on a hit
+        if labels is None or "attack" in labels.values():
+            reply, blocked = SAFE_REPLY, True
+
+    # 4. real values, screen/voice only
+    spoken = restore(reply, session_map)
+    spoken = TAG.sub("", spoken)                         # drop unresolved tags
+    # a restored secret must not be spoken
+    spoken = _SECRET.sub("[hidden]", spoken)
+
+    # final stays masked for memory
+    out = {"final": reply, "spoken": spoken}
+    if blocked:
+        # memory_extraction skips blocked turns
+        out["blocked"] = True
+    return out
+
+
+def speak_output(state: dict) -> dict:
+    text = state.get("spoken") or state.get("final") or "Done."
+    print(f"TARZ: {text}")
+    if VOICE_MODE:
+        speak(text)
+    # history stays masked
+    return {"messages": [AIMessage(content=state.get("final", text))]}
 
 
 def main():
+    set_human_hooks(confirm=human_in_the_loop,
+                    ask=ask_human, cancel=cancel_event)
     return
 
 
 if __name__ == "__main__":
-    state = {"messages": [HumanMessage(content="what do I have tomorrow")]}
-    out = retrieval(state)
-    print(out["memory_ctx"])
-    print("followup ids:", out["followup_ids"])
+    session_map["<EMAIL_1>"] = "me@gmail.com"
+    tests = [
+        "Sent it to <EMAIL_1>.",                       # spoken: me@gmail.com, final: tag
+        "Your key is sk-abcdefghijklmnopqrstuvwx",     # secret hidden in both
+        "Done <EMAIL_9>.",                             # leftover tag removed from spoken
+        "Run rm -rf / to fix it",                      # HARD hit, calls jev once
+    ]
+    for t in tests:
+        out = gaurdrails_output({"final": t})
+        print(
+            f"{t!r}\n  final : {out['final']!r}\n  spoken: {out['spoken']!r}\n")
