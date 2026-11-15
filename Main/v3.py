@@ -166,20 +166,73 @@ def retrieval(state: State) -> dict:
 
 # ---------------- CHAT ----------------
 def chat(state: State) -> dict:
+    # read-only info tools the chat model may call to answer with live data
+    CHAT_TOOL_NAMES = {"rt_data", "wether_app", "news_update", "translate",
+                       "list_events", "read_emails", "search_emails", "read_screen"}
+    chat_tools = [t for t in SINGLE_TOOLS if t.name in CHAT_TOOL_NAMES]
+    tool_map = {t.name: t for t in chat_tools}
+
+    now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
     ctx = state.get("memory_ctx", "")
-    sys_msg = SystemMessage(content=f"{SYSTEM}\n\n{ctx}" if ctx else SYSTEM)
-    try:
-        reply = get_gateway().invoke(
-            PLAIN_LLMS, [sys_msg, *state["messages"][-WINDOW:]]).content
-    except AllModelsFailed:
-        return {"last_result": "All my models are down right now, try again in a bit.",
-                "last_ok": False}
-    return {"last_result": str(reply), "last_ok": True}
+    sys_msg = SystemMessage(
+        content=(f"{SYSTEM}\n\n{ctx}\n\n" if ctx else f"{SYSTEM}\n\n")
+        + "You may call the info tools (weather, real-time data, news, translate, "
+          "calendar/email reading) when the user asks about live or personal data. "
+          "Never guess live data, call the tool. Don't call tools for plain conversation.\n"
+        + f"Current date/time: {now}")
+
+    local = [sys_msg, *state["messages"][-WINDOW:]]
+
+    for _ in range(3):  # max tool rounds for chat
+        check_cancel()
+        try:
+            ai = get_gateway().invoke(TOOL_CALLING_LLMS, local, tools=chat_tools)
+        except AllModelsFailed:
+            return {"last_result": "All my models are down right now, try again in a bit.",
+                    "last_ok": False}
+
+        calls = getattr(ai, "tool_calls", None) or []
+        if not calls:
+            return {"last_result": str(ai.content), "last_ok": True}
+
+        local.append(ai)
+        for call in calls:
+            check_cancel()
+            tool_fn = tool_map.get(call["name"])
+            if tool_fn is None:
+                result = f"Error: tool '{call['name']}' is not available in chat."
+            else:
+                try:
+                    result = tool_fn.invoke(call["args"])
+                except TaskCancelled:
+                    raise
+                except Exception as e:
+                    result = f"Error running {call['name']}: {e}"
+            local.append(ToolMessage(content=str(
+                result), tool_call_id=call["id"]))
+
+    return {"last_result": "I couldn't get that data in time, try again.", "last_ok": False}
 
 
 # ---------------- TOOL LOOP (shared by single / dedicated / autonomous) ----------------
 def _bind_and_call(messages, tools):
     return get_gateway().invoke(TOOL_CALLING_LLMS, messages, tools=tools)
+
+
+RISKY_TOOLS = {"send_email", "delete_event", "create_event",
+               "whatsapp_send_message", "whatsapp_call",
+               "discord_send_message", "telegram_message_user"}
+
+
+def _restore_args(args: dict) -> dict:
+    out = {}
+    for k, v in args.items():
+        if isinstance(v, str):
+            v = restore(v, session_map)
+            if TAG.search(v):  # tag didn't resolve, never run the tool with it
+                raise ValueError(f"unresolved placeholder in '{k}': {v}")
+        out[k] = v
+    return out
 
 
 def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int) -> dict:
@@ -216,21 +269,24 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
             name, args = call["name"], call["args"]
 
             if name == "ask_user":
-                # TODO (parked): switch to ask_human, interrupt() needs a checkpointer
-                answer = interrupt(
-                    {"question": args["question"], "pending": args.get("pending", "")})
+                answer = ask_human(args["question"])
+                # mask PII in the reply too
+                answer = guardrails_input(answer).text
                 local.append(ToolMessage(content=str(
                     answer), tool_call_id=call["id"]))
                 continue
-
-            # TODO (parked): RISKY_TOOLS confirmation + restore(args, session_map) go here
 
             tool_fn = tool_map.get(name)
             if tool_fn is None:
                 result = f"Error: tool '{name}' is not available here."
             else:
                 try:
-                    result = tool_fn.invoke(args)
+                    real_args = _restore_args(args)
+                    if name in RISKY_TOOLS and not human_in_the_loop(
+                            f"Run {name} with {real_args}?"):
+                        result = "Error: the user declined this action."
+                    else:
+                        result = tool_fn.invoke(real_args)
                 except TaskCancelled:
                     raise
                 except Exception as e:
