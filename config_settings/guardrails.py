@@ -1,19 +1,10 @@
-import json
 import logging
-import os
 import re
-import threading
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, Literal, Optional
-
-from pydantic import BaseModel
-
+from typing import Any, Callable, Optional
+from langsmith import traceable
 log = logging.getLogger("tarz.guard")
 
-VAULT_PATH = str(Path(__file__).resolve().parent.parent /
-                 "data" / "pii_vault.json")
-_vault_lock = threading.Lock()
 BLOCK_REPLY = "I blocked that. It looks like a prompt injection or a harmful system command."
 JEV_LEVELS = {"normal": 0, "unsure": 1, "attack": 2}
 JevAsk = Callable[[str], Optional[dict[str, str]]]
@@ -69,12 +60,9 @@ PII_RULES = [
     ("CARD", re.compile(r"(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)")),
     ("AADHAAR", re.compile(r"(?<!\d)[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}(?!\d)")),
     ("PAN", re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b")),
-    (
-        "PHONE",
-        re.compile(
-            r"(?<!\d)(?:\+?91[ -]?)?[6-9]\d{4}[ -]?\d{5}(?!\d)|(?<!\d)\+\d{1,3}[ -]?\d{6,12}(?!\d)"
-        ),
-    ),
+    ("PHONE", re.compile(
+        r"(?<!\d)(?:\+?91[ -]?)?[6-9]\d{4}[ -]?\d{5}(?!\d)|(?<!\d)\+\d{1,3}[ -]?\d{6,12}(?!\d)"
+    )),
 ]
 TAG = re.compile(r"<([A-Z]+)_(\d+)>")
 
@@ -100,7 +88,6 @@ def mask_pii(text: str, existing: Optional[dict[str, str]] = None) -> tuple[str,
                 seen[val] = tag
                 mapping[tag] = val
             return seen[val]
-
         return repl
 
     for label, rx in PII_RULES:
@@ -118,9 +105,10 @@ def restore(obj: Any, pii_map: dict[str, str]) -> Any:
     return obj
 
 
-class Verdict(BaseModel):
-    verdict: Literal["safe", "suspicious", "malicious"]
-    category: Literal["injection", "system_threat", "none"] = "none"
+@dataclass
+class Verdict:
+    verdict: str                 # "safe" | "suspicious" | "malicious"
+    category: str = "none"       # "injection" | "system_threat" | "none"
     reason: str = ""
 
 
@@ -136,72 +124,43 @@ class GuardResult:
 
 
 class Guardrails:
-    def __init__(self, ask: Optional[JevAsk] = None, always_jev: bool = False, max_chars: int = 2000,
-                 vault_path: Optional[str] = None):
-        self.vault_path = vault_path
+    def __init__(self, ask: Optional[JevAsk] = None, always_jev: bool = False, max_chars: int = 2000):
         self.ask = ask
         self.always_jev = always_jev
         self.max_chars = max_chars
 
-    def _read_vault(self) -> dict[str, str]:
-        if not self.vault_path or not os.path.exists(self.vault_path):
-            return {}
-        try:
-            with open(self.vault_path, encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            log.warning("pii vault unreadable, moved to .bad: %s",
-                        self.vault_path)
-            os.replace(self.vault_path, self.vault_path + ".bad")
-            return {}
-
-    def _write_vault(self, mapping: dict[str, str]) -> None:
-        os.makedirs(os.path.dirname(self.vault_path), exist_ok=True)
-        tmp = self.vault_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, ensure_ascii=False)
-        os.replace(tmp, self.vault_path)
-
-    def mask(self, text: str, existing_map: Optional[dict[str, str]] = None) -> tuple[str, dict[str, str]]:
-        with _vault_lock:
-            vault = self._read_vault()
-            masked, mapping = mask_pii(text, {**vault, **(existing_map or {})})
-            if self.vault_path and mapping.keys() - vault.keys():
-                self._write_vault({**vault, **mapping})
-            return masked, mapping
-
     def check(self, text: str, existing_map: Optional[dict[str, str]] = None) -> GuardResult:
-        masked, pii_map = self.mask(text, existing_map)
+        masked, pii_map = mask_pii(text, existing_map)
 
         for category, patterns in HARD.items():
             if any(rx.search(masked) for rx in patterns):
-                v = Verdict(verdict="malicious",
-                            category=category, reason="rule match")
+                v = Verdict("malicious", category, "rule match")
                 return self._result(v, masked, pii_map)
 
         if self.always_jev or any(rx.search(masked) for rx in SOFT):
             v = self._ask_jev(masked)
         else:
-            v = Verdict(verdict="safe")
+            v = Verdict("safe")
         return self._result(v, masked, pii_map)
 
     def _ask_jev(self, masked: str) -> Verdict:
         if self.ask is None:
-            return Verdict(verdict="suspicious", reason="jev not configured")
+            return Verdict("suspicious", reason="jev not configured")
         labels = self.ask(masked[: self.max_chars])
         if not labels:
-            return Verdict(verdict="suspicious", reason="jev unavailable")
+            return Verdict("suspicious", reason="jev unavailable")
         worst = max(labels, key=lambda k: JEV_LEVELS.get(labels[k], 1))
         level = JEV_LEVELS.get(labels[worst], 1)
         return Verdict(
-            verdict=("safe", "suspicious", "malicious")[level],
-            category=worst if level else "none",
-            reason=f"jev: {labels[worst]}",
+            ("safe", "suspicious", "malicious")[level],
+            worst if level else "none",
+            f"jev: {labels[worst]}",
         )
 
     def _result(self, v: Verdict, masked: str, pii_map: dict[str, str]) -> GuardResult:
         allowed = v.verdict != "malicious"
-        return GuardResult(allowed, v.verdict, v.category, v.reason, masked, pii_map, "" if allowed else BLOCK_REPLY)
+        return GuardResult(allowed, v.verdict, v.category, v.reason, masked, pii_map,
+                           "" if allowed else BLOCK_REPLY)
 
 
 def _questions(choice_cls):
@@ -230,6 +189,7 @@ def _questions(choice_cls):
     }
 
 
+@traceable(name="jev", run_type="llm")
 def jev_ask(text: str) -> Optional[dict[str, str]]:
     from typesafe_sdk import Choice, TypeSafeClient
 
