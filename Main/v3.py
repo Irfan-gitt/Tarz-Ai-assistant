@@ -1,10 +1,14 @@
 
 from langchain_core.messages import ToolMessage
+from dotenv import load_dotenv
+
 import keyboard
 import threading
 from datetime import datetime
 import re
+import json
 from langgraph.checkpoint.memory import MemorySaver
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
 from typing import Annotated
@@ -12,6 +16,7 @@ from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 import sys  # noqa
 import os  # noqa
+
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -23,7 +28,7 @@ from langsmith import traceable
 from config_settings.guardrails import Guardrails, jev_ask, restore, HARD, PII_RULES, TAG, restore, jev_ask
 from config_settings.jev_gate import jev_gate
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
-from config_settings.config import TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS
+from config_settings.config import TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS, CLASSIFY_LLMS
 from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -38,6 +43,7 @@ from Tools.Dedicated_Tools.whatsapp_gui import whatsapp_send_message, whatsapp_c
 from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_toggle_mute, discord_toggle_deafen, discord_answer_call, discord_decline_call
 from Tools.Autonomous_layer.autonomous_agent import computer_agent, set_human_hooks
 
+from langchain_core.tools import BaseTool, StructuredTool
 
 from Actions.execute_action import click, type_text, press_key, read_screen, open_app, volume_control, wether_app, use_shortcut, set_alarm, news_update, set_timer, translate, clipboard, wait
 from Memory_and_Retrieval.memory import save_imp_context_background, mark_followups_asked
@@ -55,73 +61,13 @@ os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "false")
 
 VOICE_MODE = False  # True = wake word + microphone + speaker, False = type in the terminal
 WINDOW = 8  # how many recent messages every node sees
-
+load_dotenv()
 
 guard = Guardrails(ask=jev_ask)
 session_map: dict[str, str] = {}
 
-# Tools
-# --------------------------------------------------------------------------
 
-
-@tool
-def ask_user(question: str, pending: str) -> str:
-    """Ask the user for a missing detail instead of guessing (song name, contact, message text). question = what to ask. pending = one short line: the task and what you still need."""
-    return question
-
-
-ALL_TOOLS = [
-    click, type_text, press_key, open_app, use_shortcut, read_screen, clipboard, wait,
-    volume_control, set_alarm, set_timer,
-    send_email, read_emails, search_emails,
-    create_event, list_events, delete_event,
-    wether_app, rt_data, translate,
-    media_play_pause, media_previous_track, media_next_track,
-    spotify_play_playlist, spotify_search_and_play,
-    whatsapp_send_message, whatsapp_call,
-    discord_send_message, discord_toggle_mute, discord_toggle_deafen, discord_answer_call, discord_decline_call,
-    news_update,
-    telegram_message_user,
-    computer_agent
-]
-
-
-AUTONOMOUS_TOOLS = [
-    computer_agent,
-]
-
-
-SINGLE_TOOLS = [
-
-    click, type_text, press_key, open_app, use_shortcut, read_screen, clipboard, wait,
-
-    volume_control, set_alarm, set_timer,
-    send_email, read_emails, search_emails,
-    create_event, list_events, delete_event,
-    wether_app, rt_data, translate, news_update,
-    media_play_pause, media_previous_track, media_next_track,
-]
-
-
-DEDICATED_TOOLS = [
-    spotify_play_playlist, spotify_search_and_play,
-    whatsapp_send_message, whatsapp_call,
-    discord_send_message, discord_toggle_mute, discord_toggle_deafen,
-    discord_answer_call, discord_decline_call,
-    telegram_message_user,
-]
-
-TOOLS_BY_ROUTE = {
-    "autonomous": AUTONOMOUS_TOOLS,
-    "single": SINGLE_TOOLS,
-    "dedicated": DEDICATED_TOOLS,
-}
-
-
-class Statex(TypedDict):
-    pass
-
-
+# ---------------- STATE ----------------
 class State(TypedDict, total=False):
     messages: Annotated[list, add_messages]
     user_text: str
@@ -135,142 +81,49 @@ class State(TypedDict, total=False):
     results: list
     last_result: str
     last_ok: bool
-    final: str
-    spoken: str
+    final: str        # masked reply: memory reads this
+    spoken: str       # real values: screen and voice read this
 
 
-def _bind_and_call(messages, tools):
-    # TODO: adjust to your gateway's signature, this is the one line I can't see
-    return get_gateway().invoke(TOOL_CALLING_LLMS, messages, tools=tools)
+# ---------------- TOOLS ----------------
+@tool
+def ask_user(question: str, pending: str) -> str:
+    """Ask the user for a missing detail instead of guessing (song name, contact, message text). question = what to ask. pending = one short line: the task and what you still need."""
+    return question
 
 
-def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int) -> dict:
-    now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
-    sys_msg = SystemMessage(
-        content=f"{SYSTEM}\n\n{branch_prompt}\nCurrent date/time: {now}")
+AUTONOMOUS_TOOLS = [computer_agent]
 
-    tools = [*tools, ask_user]
-    tool_map = {t.name: t for t in tools}
+SINGLE_TOOLS = [
+    click, type_text, press_key, open_app, use_shortcut, read_screen, clipboard, wait,
+    volume_control, set_alarm, set_timer,
+    send_email, read_emails, search_emails,
+    create_event, list_events, delete_event,
+    wether_app, rt_data, translate, news_update,
+    media_play_pause, media_previous_track, media_next_track,
+]
 
-    local = [sys_msg, *state["messages"][-WINDOW:]]
-
-    for _ in range(max_steps):
-        check_cancel()
-        try:
-            ai = _bind_and_call(local, tools)
-        except AllModelsFailed:
-            return {"messages": [AIMessage(content="All my models are down right now, try again in a bit.")]}
-
-        local.append(ai)
-        calls = getattr(ai, "tool_calls", None) or []
-        if not calls:
-            return {"messages": [AIMessage(content=ai.content)]}  # done
-
-        for call in calls:
-            check_cancel()
-            name, args = call["name"], call["args"]
-
-            if name == "ask_user":
-                # pause graph, wait for the user's answer, then continue
-                answer = interrupt(
-                    {"question": args["question"], "pending": args.get("pending", "")})
-                local.append(ToolMessage(content=str(
-                    answer), tool_call_id=call["id"]))
-                continue
-
-            tool_fn = tool_map.get(name)
-            if tool_fn is None:
-                result = f"Error: tool '{name}' is not available here."
-            else:
-                try:
-                    result = tool_fn.invoke(args)
-                except TaskCancelled:
-                    raise
-                except Exception as e:
-                    result = f"Error running {name}: {e}"
-            local.append(ToolMessage(content=str(
-                result), tool_call_id=call["id"]))
-
-    return {"messages": [AIMessage(content="I hit my step limit before finishing. Check what got done and tell me if you want me to continue.")]}
+DEDICATED_TOOLS = [
+    spotify_play_playlist, spotify_search_and_play,
+    whatsapp_send_message, whatsapp_call,
+    discord_send_message, discord_toggle_mute, discord_toggle_deafen,
+    discord_answer_call, discord_decline_call,
+    telegram_message_user,
+]
 
 
-def listen():
-    return input("You: ")
+def _as_tool(t):
+    """Plain functions become real tools, so .name and .invoke() exist everywhere."""
+    if isinstance(t, BaseTool):
+        return t
+    return StructuredTool.from_function(
+        t, name=t.__name__, description=(t.__doc__ or t.__name__).strip())
 
 
-def guardrails_input(user_text: str):
-    global session_map
-    result = guard.check(user_text, session_map)
-    session_map = result.pii_map
-    return result
-
-
-def jev_category():
-    return
-
-
-WINDOW = 8
-
-
-def chat(state: dict) -> dict:
-    ctx = state.get("memory_ctx", "")
-    sys_msg = SystemMessage(content=f"{SYSTEM}\n\n{ctx}" if ctx else SYSTEM)
-    try:
-        reply = get_gateway().invoke(
-            PLAIN_LLMS, [sys_msg, *state["messages"][-WINDOW:]]).content
-    except AllModelsFailed:
-        reply = "All my models are down right now, try again in a bit."
-    return {"messages": [AIMessage(content=reply)]}
-
-
-def retrieval(state: dict) -> dict:
-    users = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    # first turn of the session
-    first_message = len(state["messages"]) == 1
-    ctx = build_memory_context(users, include_followups=first_message)
-    return {"memory_ctx": ctx.text, "followup_ids": ctx.followup_ids}
-
-
-_last_save: threading.Thread | None = None
-
-
-def memory_extraction(state: dict) -> dict:
-    global _last_save
-    if state.get("blocked"):
-        return {}
-
-    masked_reply = state.get("final") or " ".join(
-        r for r in state.get("results", []) if r)
-    masked_user = next((m.content for m in reversed(state["messages"])
-                        if isinstance(m, HumanMessage)), "")
-    if not masked_user or not masked_reply:
-        return {}
-
-    # skip pure single-tool turns (alarms, volume...), nothing worth remembering
-    routes = {p["route"] for p in state.get("plan", [])}
-    if routes and routes == {"single"}:
-        return {}
-
-    _last_save = save_imp_context_background(masked_user, masked_reply)
-    return {}
-
-
-def orchastration():
-    return
-
-
-def single_tool(state: State):
-    return run_tool_agent(state, SINGLE_TOOLS, SINGLE_PROMPT, max_steps=5)
-
-
-def tools_dedicated(state: State):
-    return run_tool_agent(state, DEDICATED_TOOLS, DEDICATED_PROMPT, max_steps=4)
-
-
-def agent_autonomous(state: State):
-    return run_tool_agent(state, AUTONOMOUS_TOOLS, AUTONOMOUS_PROMPT, max_steps=5)
-
-
+AUTONOMOUS_TOOLS = [_as_tool(t) for t in AUTONOMOUS_TOOLS]
+SINGLE_TOOLS = [_as_tool(t) for t in SINGLE_TOOLS]
+DEDICATED_TOOLS = [_as_tool(t) for t in DEDICATED_TOOLS]
+# ---------------- HUMAN IN THE LOOP (shared) ----------------
 YES = {"y", "yes", "yeah", "yep", "ok", "sure", "do it"}
 
 
@@ -285,6 +138,200 @@ def human_in_the_loop(question: str) -> bool:
     return ask_human(f"{question} (yes/no)").strip().lower() in YES
 
 
+# ---------------- GUARDRAILS (input) ----------------
+def guardrails_input(user_text: str):
+    global session_map
+    result = guard.check(user_text, session_map)
+    session_map = result.pii_map
+    return result
+
+
+def guard_in(state: State) -> dict:
+    result = guardrails_input(state["user_text"])
+    reset = {"plan": [], "step_idx": 0, "results": [], "final": "", "task": "",
+             "last_ok": True, "last_result": "", "memory_ctx": "", "followup_ids": []}
+    if not result.allowed:
+        return {**reset, "blocked": True, "final": result.reply, "spoken": result.reply}
+    return {**reset, "blocked": False, "messages": [HumanMessage(content=result.text)]}
+
+
+# ---------------- RETRIEVAL ----------------
+def retrieval(state: State) -> dict:
+    users = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+    # first turn of the session
+    first_message = len(state["messages"]) == 1
+    ctx = build_memory_context(users, include_followups=first_message)
+    return {"memory_ctx": ctx.text, "followup_ids": ctx.followup_ids}
+
+
+# ---------------- CHAT ----------------
+def chat(state: State) -> dict:
+    ctx = state.get("memory_ctx", "")
+    sys_msg = SystemMessage(content=f"{SYSTEM}\n\n{ctx}" if ctx else SYSTEM)
+    try:
+        reply = get_gateway().invoke(
+            PLAIN_LLMS, [sys_msg, *state["messages"][-WINDOW:]]).content
+    except AllModelsFailed:
+        return {"last_result": "All my models are down right now, try again in a bit.",
+                "last_ok": False}
+    return {"last_result": str(reply), "last_ok": True}
+
+
+# ---------------- TOOL LOOP (shared by single / dedicated / autonomous) ----------------
+def _bind_and_call(messages, tools):
+    return get_gateway().invoke(TOOL_CALLING_LLMS, messages, tools=tools)
+
+
+def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int) -> dict:
+    now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
+    sys_msg = SystemMessage(
+        content=f"{SYSTEM}\n\n{branch_prompt}\nCurrent date/time: {now}")
+    tools = [*tools, ask_user]
+    tool_map = {t.name: t for t in tools}
+
+    local = [sys_msg, *state["messages"][-WINDOW:]]
+    prev = "\n".join(r for r in state.get("results", [])[-2:] if r)
+    task = state.get("task", "")
+    if task:
+        local.append(HumanMessage(
+            content=f"Do this now: {task}"
+            + (f"\n\nPrevious step results:\n{prev}" if prev else "")))
+
+    last_err = False
+    for _ in range(max_steps):
+        check_cancel()
+        try:
+            ai = _bind_and_call(local, tools)
+        except AllModelsFailed:
+            return {"last_result": "All my models are down right now, try again in a bit.",
+                    "last_ok": False}
+
+        local.append(ai)
+        calls = getattr(ai, "tool_calls", None) or []
+        if not calls:
+            return {"last_result": str(ai.content), "last_ok": not last_err}
+
+        for call in calls:
+            check_cancel()
+            name, args = call["name"], call["args"]
+
+            if name == "ask_user":
+                # TODO (parked): switch to ask_human, interrupt() needs a checkpointer
+                answer = interrupt(
+                    {"question": args["question"], "pending": args.get("pending", "")})
+                local.append(ToolMessage(content=str(
+                    answer), tool_call_id=call["id"]))
+                continue
+
+            # TODO (parked): RISKY_TOOLS confirmation + restore(args, session_map) go here
+
+            tool_fn = tool_map.get(name)
+            if tool_fn is None:
+                result = f"Error: tool '{name}' is not available here."
+            else:
+                try:
+                    result = tool_fn.invoke(args)
+                except TaskCancelled:
+                    raise
+                except Exception as e:
+                    result = f"Error running {name}: {e}"
+
+            last_err = (str(result).startswith("Error")
+                        or (isinstance(result, dict)
+                            and result.get("status") in ("failed", "aborted")))
+            local.append(ToolMessage(content=str(
+                result), tool_call_id=call["id"]))
+
+    return {"last_result": "I hit my step limit before finishing.", "last_ok": False}
+
+
+def single_tool(state: State) -> dict:
+    return run_tool_agent(state, SINGLE_TOOLS, SINGLE_PROMPT, max_steps=5)
+
+
+def tools_dedicated(state: State) -> dict:
+    return run_tool_agent(state, DEDICATED_TOOLS, DEDICATED_PROMPT, max_steps=4)
+
+
+def agent_autonomous(state: State) -> dict:
+    return run_tool_agent(state, AUTONOMOUS_TOOLS, AUTONOMOUS_PROMPT, max_steps=5)
+
+
+# ---------------- ORCHESTRATOR (the hub) ----------------
+ROUTES = {"chat", "single", "dedicated", "autonomous"}
+MAX_PLAN_STEPS = 4
+
+PLANNER_PROMPT = """You are the planner for a desktop voice assistant. Reply with ONLY a JSON array:
+[{"route": "chat|single|dedicated|autonomous", "task": "..."}]
+
+Routes:
+- chat: conversation, questions, opinions, anything needing no action. task = "".
+- single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email, calendar,
+  weather, news, translate, volume, media play/pause/next/previous.
+- dedicated: actions inside the Spotify app, WhatsApp, Telegram or Discord (play a song, send a message, call).
+- autonomous: everything else. Anything that needs several clicks or typing, anything on a website or in a
+  browser, downloads, searching the web, filling forms, or any job no single or dedicated tool covers.
+
+Rules:
+- NEVER plan low-level GUI actions (open an app, type text, press a key, click a button) as separate steps.
+  If a job needs several UI actions, it is ONE autonomous step with the whole goal as the task.
+- A task like "download X from the official website using Brave" is exactly ONE autonomous step.
+- One clear request = ONE step. Never split one app action ("play X on spotify" is ONE step).
+- Use more than one step only for truly different jobs ("set a timer, then email Sam").
+- Each task must be self-contained: include names, text, times, and the browser name if the user gave one.
+  Keep placeholders like <EMAIL_1> exactly as written.
+- Use the memory block to resolve things like "my usual playlist".
+- Maximum 4 steps.
+
+Example:
+user: download spotify from the official website in brave
+[{"route": "autonomous", "task": "Download the Spotify installer from the official Spotify website using Brave"}]"""
+
+
+def _make_plan(state: State) -> list:
+    info = (f"\n\nSingle tools: {', '.join(t.name for t in SINGLE_TOOLS)}"
+            f"\nDedicated tools: {', '.join(t.name for t in DEDICATED_TOOLS)}")
+    ctx = state.get("memory_ctx", "")
+    sys_msg = SystemMessage(content=PLANNER_PROMPT +
+                            info + (f"\n\n{ctx}" if ctx else ""))
+    try:
+        raw = get_gateway().invoke(
+            CLASSIFY_LLMS, [sys_msg, *state["messages"][-WINDOW:]]).content
+        data = json.loads(re.search(r"\[.*\]", raw, re.S).group())
+    except Exception:
+        data = []
+
+    plan = []
+    for s in data[:MAX_PLAN_STEPS]:
+        if isinstance(s, dict):
+            route = s.get("route") if s.get("route") in ROUTES else "chat"
+            plan.append({"route": route, "task": str(s.get("task") or "")})
+    # planner failed: just talk
+    return plan or [{"route": "chat", "task": ""}]
+
+
+def orchastration(state: State) -> dict:
+    plan = state.get("plan")
+    if not plan:                                        # new turn
+        plan, idx, results = _make_plan(state), 0, []
+    else:                                               # a branch just finished
+        results = [*state.get("results", []), state.get("last_result", "")]
+        idx = state["step_idx"] + 1
+        # verify: failed -> stop, report it
+        if not state.get("last_ok", True):
+            idx = len(plan)
+
+    if idx >= len(plan):
+        final = "\n".join(r for r in results if r) or "Done."
+        return {"plan": plan, "step_idx": idx, "results": results,
+                "route": "end", "final": final}
+
+    step = plan[idx]
+    return {"plan": plan, "step_idx": idx, "results": results,
+            "route": step["route"], "task": step["task"]}
+
+
+# ---------------- GUARDRAILS (output) ----------------
 _SECRET = dict(PII_RULES)["SECRET"]
 SAFE_REPLY = "I can't say that one."
 
@@ -293,7 +340,7 @@ def _hard_hit(text: str) -> bool:
     return any(rx.search(text) for patterns in HARD.values() for rx in patterns)
 
 
-def gaurdrails_output(state: dict) -> dict:
+def gaurdrails_output(state: State) -> dict:
     reply = state.get("final") or ""
     if not reply:
         return {}
@@ -321,30 +368,127 @@ def gaurdrails_output(state: dict) -> dict:
     return out
 
 
-def speak_output(state: dict) -> dict:
+# ---------------- MEMORY EXTRACTION ----------------
+_last_save: threading.Thread | None = None
+
+
+def memory_extraction(state: State) -> dict:
+    global _last_save
+    if state.get("blocked"):
+        return {}
+
+    masked_reply = state.get("final") or ""
+    masked_user = next((m.content for m in reversed(state["messages"])
+                        if isinstance(m, HumanMessage)), "")
+    if not masked_user or not masked_reply:
+        return {}
+
+    # skip pure single-tool turns (alarms, volume...), nothing worth remembering
+    routes = {p["route"] for p in state.get("plan", [])}
+    if routes and routes == {"single"}:
+        return {}
+
+    _last_save = save_imp_context_background(masked_user, masked_reply)
+    return {}
+
+
+# ---------------- SPEAK ----------------
+def speak_output(state: State) -> dict:
     text = state.get("spoken") or state.get("final") or "Done."
     print(f"TARZ: {text}")
     if VOICE_MODE:
         speak(text)
     # history stays masked
-    return {"messages": [AIMessage(content=state.get("final", text))]}
+    return {"messages": [AIMessage(content=state.get("final") or text)]}
+
+
+# ---------------- GRAPH ----------------
+def build_graph():
+    g = StateGraph(State)
+
+    for name, fn in [
+        ("guard_in", guard_in),
+        ("retrieval", retrieval),
+        ("orchastration", orchastration),
+        ("chat", chat),
+        ("single_tool", single_tool),
+        ("tools_dedicated", tools_dedicated),
+        ("agent_autonomous", agent_autonomous),
+        ("gaurdrails_output", gaurdrails_output),
+        ("memory_extraction", memory_extraction),
+        ("speak_output", speak_output),
+    ]:
+        g.add_node(name, fn)
+
+    g.add_edge(START, "guard_in")
+    g.add_conditional_edges("guard_in",
+                            lambda s: "speak_output" if s["blocked"] else "retrieval",
+                            ["speak_output", "retrieval"])
+    g.add_edge("retrieval", "orchastration")
+    g.add_conditional_edges("orchastration", lambda s: s["route"],
+                            {"chat": "chat", "single": "single_tool",
+                             "dedicated": "tools_dedicated",
+                             "autonomous": "agent_autonomous",
+                             "end": "gaurdrails_output"})
+    for n in ("chat", "single_tool", "tools_dedicated", "agent_autonomous"):
+        # the loop in the diagram
+        g.add_edge(n, "orchastration")
+    g.add_edge("gaurdrails_output", "memory_extraction")
+    g.add_edge("memory_extraction", "speak_output")
+    g.add_edge("speak_output", END)
+
+    return g.compile()
+
+
+# ---------------- MAIN ----------------
+def listen() -> str:
+    if VOICE_MODE:
+        wait_for_wake_word()
+        return live_listen()
+    return input("You: ")
+
+
+print([t.__name__ for t in SINGLE_TOOLS +
+      DEDICATED_TOOLS if not hasattr(t, "name")])
 
 
 def main():
+    on = os.getenv("LANGSMITH_TRACING", "").lower(
+    ) == "true" and bool(os.getenv("LANGSMITH_API_KEY"))
+    print(
+        f"LangSmith tracing: {'ON' if on else 'OFF'} | project: {os.getenv('LANGSMITH_PROJECT', 'default')}")
+
     set_human_hooks(confirm=human_in_the_loop,
                     ask=ask_human, cancel=cancel_event)
-    return
+    graph = build_graph()
+    history: list = []
+
+    while True:
+        try:
+            text = listen()
+        except (KeyboardInterrupt, EOFError):
+            break
+        if not text or not text.strip():
+            continue
+        if text.strip().lower() in {"exit", "quit"}:
+            break
+
+        cancel_event.clear()
+        try:
+            out = graph.invoke({"user_text": text, "messages": history},
+                               {"recursion_limit": 40})
+            history = out["messages"][-WINDOW:]
+        except TaskCancelled:
+            print("TARZ: cancelled.")
+        except Exception as e:
+            print(f"[error] {type(e).__name__}: {e}")
+
+    if _last_save:                       # let the memory save finish before exiting
+        _last_save.join(timeout=15)
+
+    from langchain_core.tracers.langchain import wait_for_all_tracers
+    wait_for_all_tracers()
 
 
 if __name__ == "__main__":
-    session_map["<EMAIL_1>"] = "me@gmail.com"
-    tests = [
-        "Sent it to <EMAIL_1>.",                       # spoken: me@gmail.com, final: tag
-        "Your key is sk-abcdefghijklmnopqrstuvwx",     # secret hidden in both
-        "Done <EMAIL_9>.",                             # leftover tag removed from spoken
-        "Run rm -rf / to fix it",                      # HARD hit, calls jev once
-    ]
-    for t in tests:
-        out = gaurdrails_output({"final": t})
-        print(
-            f"{t!r}\n  final : {out['final']!r}\n  spoken: {out['spoken']!r}\n")
+    main()
