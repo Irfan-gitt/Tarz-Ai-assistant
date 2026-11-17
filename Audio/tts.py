@@ -1,8 +1,10 @@
 import io
+import base64
 import re
+import subprocess
 import sounddevice as sd
 import soundfile as sf
-import pyaudio
+import numpy as np
 from groq import Groq
 from cartesia import Cartesia
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
@@ -18,27 +20,28 @@ def _clean_for_speech(text: str) -> str:
     return text.strip()
 
 
-def _speak_groq(text: str, cfg: dict, key: str):
+def _speak_groq(text: str, cfg: dict, key: str, output_device=None, speed=1.0, volume=1.0):
     groq_client = Groq(api_key=key)
     response = groq_client.audio.speech.create(
         model=cfg["model"], voice=cfg["voice"], input=text, response_format="wav",
     )
     data, samplerate = sf.read(io.BytesIO(response.read()))
-    sd.play(data, samplerate)
+    if speed > 0 and speed != 1.0:
+        indices = np.arange(0, len(data), speed)
+        data = np.take(data, indices[indices < len(data)].astype(int), axis=0)
+    data = np.clip(data * volume, -1.0, 1.0)
+    sd.play(data, samplerate, device=output_device)
     sd.wait()
 
 
-def _speak_cartesia(text: str, cfg: dict, key: str):
+def _speak_cartesia(text: str, cfg: dict, key: str, output_device=None, speed=1.0, volume=1.0):
     cartesia_client = Cartesia(api_key=key)
-    p = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paFloat32,
-                    channels=1, rate=44100, output=True)
     try:
         with cartesia_client.tts.websocket_connect() as connection:
             ctx = connection.context(
                 model_id=cfg["model"],
                 voice={"mode": "id", "id": cfg["voice"],
-                       "speed": 0.65, "pitch": 1.0},
+                       "speed": speed, "pitch": 1.0},
                 output_format={"container": "raw",
                                "encoding": "pcm_f32le", "sample_rate": 44100},
                 language="en",
@@ -47,24 +50,47 @@ def _speak_cartesia(text: str, cfg: dict, key: str):
             ctx.no_more_inputs()
             for response in ctx.receive():
                 if response.type == "chunk" and response.audio:
-                    stream.write(response.audio)
+                    samples = np.frombuffer(response.audio, dtype=np.float32)
+                    sd.play(np.clip(samples * volume, -1.0, 1.0), 44100, device=output_device)
+                    sd.wait()
     finally:
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
+        cartesia_client.close()
 
 
-def speak(text: str):
+def _speak_windows(text: str, output_device=None, speed=1.0, volume=1.0):
+    rate = round(max(-10, min(10, (speed - 1.0) * 10)))
+    level = round(max(0.0, min(1.0, volume)) * 100)
+    script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        f"$s.Rate={rate}; $s.Volume={level}; "
+        "$m=New-Object IO.MemoryStream; $s.SetOutputToWaveStream($m); "
+        "$s.Speak([Console]::In.ReadToEnd()); "
+        "[Console]::Out.Write([Convert]::ToBase64String($m.ToArray()))"
+    )
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], input=text,
+                            text=True, check=True, capture_output=True)
+    audio, samplerate = sf.read(io.BytesIO(base64.b64decode(result.stdout.strip())))
+    sd.play(audio, samplerate, device=output_device)
+    sd.wait()
+
+
+def speak(text: str, provider: str = "auto", output_device=None, speed: float = 1.0, volume: float = 1.0):
     text = _clean_for_speech(text)
     if not text:
         return
 
+    if provider == "windows":
+        _speak_windows(text, output_device, speed, volume)
+        return
+
     def call(name, cfg, key):
         if name == "tts_groq":
-            return _speak_groq(text, cfg, key)
-        return _speak_cartesia(text, cfg, key)
+            return _speak_groq(text, cfg, key, output_device, speed, volume)
+        return _speak_cartesia(text, cfg, key, output_device, speed, volume)
 
     try:
-        get_gateway().run(TTS_MODELS, call)
+        models = {"groq": ["tts_groq"], "cartesia": ["tts_cartesia"]}.get(provider, TTS_MODELS)
+        get_gateway().run(models, call)
     except AllModelsFailed as e:
         print(f"[TTS] All speech models failed: {e}")

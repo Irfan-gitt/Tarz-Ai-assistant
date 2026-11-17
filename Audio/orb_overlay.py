@@ -21,12 +21,192 @@ is layered low-alpha shapes instead.
 
 import sys
 import math
+import ast
+import re
 import queue
 import threading
 
-from PyQt6.QtWidgets import QApplication, QWidget
-from PyQt6.QtGui import QPainter, QRadialGradient, QConicalGradient, QColor, QPen, QFont, QFontMetrics
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QLabel, QPushButton, QLineEdit, QVBoxLayout,
+    QHBoxLayout, QFrame,
+)
+from PyQt6.QtGui import QPainter, QRadialGradient, QConicalGradient, QColor, QPen, QFont, QFontMetrics, QCursor
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
+
+try:
+    import winsound
+except ImportError:  # pragma: no cover - non-Windows fallback
+    winsound = None
+
+
+class _ApprovalPopup(QWidget):
+    """Small system-wide, always-on-top prompt used for TARZ approvals."""
+
+    def __init__(self, title: str, message: str, kind: str, on_result):
+        super().__init__()
+        self.setObjectName("approvalPopup")
+        self._kind = kind
+        self._on_result = on_result
+        self._finished = False
+        self.setWindowFlags(
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+        self.setFixedWidth(410)
+        self.setStyleSheet("""
+            QWidget#approvalPopup { background:#15171b; color:#f5f6f8; font:14px 'Segoe UI'; border:1px solid #343840; border-radius:16px; }
+            QWidget { color:#f5f6f8; font:14px 'Segoe UI'; }
+            QLabel#eyebrow { color:#ffae72; font-size:11px; font-weight:700; letter-spacing:1px; }
+            QLabel#title { font-size:17px; font-weight:600; }
+            QLabel#message { color:#c5c8ce; }
+            QFrame#details { background:#1d2025; border:1px solid #30343b; border-radius:11px; }
+            QLabel#key { color:#949aa4; font-size:12px; }
+            QLabel#value { color:#f1f2f4; font-size:13px; }
+            QLineEdit { background:#0d0e10; border:1px solid #45474d; border-radius:8px; padding:10px; color:white; }
+            QPushButton { border:1px solid #41454d; border-radius:9px; padding:7px 14px; background:#202227; color:#f3f4f6; font-weight:600; }
+            QPushButton#primary { background:#ff8a3d; color:#171717; border-color:#ff8a3d; }
+            QPushButton#primary:hover { background:#ffa061; border-color:#ffa061; }
+            QPushButton#deny:hover { background:#30333a; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(7)
+
+        eyebrow = QLabel("TARZ  /  ACTION APPROVAL" if kind == "confirm" else "TARZ  /  NEEDS YOUR INPUT")
+        eyebrow.setObjectName("eyebrow")
+        heading = QLabel(title)
+        heading.setObjectName("title")
+        layout.addWidget(eyebrow)
+        layout.addWidget(heading)
+
+        action_name, args = self._parse_action(message) if kind == "confirm" else (None, None)
+        if action_name and args is not None:
+            heading.setText("Review this action")
+            action_title = QLabel(self._humanize_action(action_name))
+            action_title.setObjectName("message")
+            layout.addWidget(action_title)
+            details = QFrame()
+            details.setObjectName("details")
+            details_layout = QVBoxLayout(details)
+            details_layout.setContentsMargins(10, 8, 10, 8)
+            details_layout.setSpacing(5)
+            for key, value in args.items():
+                field = QHBoxLayout()
+                field.setSpacing(8)
+                key_label = QLabel(self._humanize_field(key))
+                key_label.setObjectName("key")
+                key_label.setFixedWidth(62)
+                value_label = QLabel(str(value))
+                value_label.setObjectName("value")
+                value_label.setWordWrap(True)
+                value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                field.addWidget(key_label)
+                field.addWidget(value_label, 1)
+                details_layout.addLayout(field)
+            layout.addWidget(details)
+            body_text = "Allow TARZ to continue with this action?"
+        else:
+            body_text = message
+        body = QLabel(body_text)
+        body.setObjectName("message")
+        body.setWordWrap(True)
+        body.setMaximumHeight(90)
+        layout.addWidget(body)
+
+        self._answer = None
+        if kind == "answer":
+            self._answer = QLineEdit()
+            self._answer.setPlaceholderText("Type your answer…")
+            layout.addWidget(self._answer)
+            self._answer.returnPressed.connect(self._submit_answer)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("Cancel" if kind == "answer" else "Deny")
+        cancel.setObjectName("deny")
+        primary = QPushButton("Send" if kind == "answer" else "Allow")
+        primary.setObjectName("primary")
+        cancel.clicked.connect(self._cancel)
+        primary.clicked.connect(self._submit_answer if kind == "answer" else self._approve)
+        buttons.addWidget(cancel)
+        buttons.addWidget(primary)
+        layout.addLayout(buttons)
+
+        self.adjustSize()
+        screen_handle = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        screen = screen_handle.availableGeometry()
+        self.move(screen.right() - self.width() - 24, screen.top() + 24)
+
+    @staticmethod
+    def _parse_action(message: str):
+        question = message.strip()
+        if question.endswith("?"):
+            question = question[:-1].rstrip()
+        match = re.fullmatch(r"Run\s+([\w.-]+)\s+with\s+(.+)", question, re.DOTALL)
+        if not match:
+            return None, None
+        try:
+            args = ast.literal_eval(match.group(2))
+        except (SyntaxError, ValueError):
+            return None, None
+        return match.group(1), args if isinstance(args, dict) else None
+
+    @staticmethod
+    def _humanize_action(name: str) -> str:
+        titles = {
+            "whatsapp_send_message": "Send a WhatsApp message",
+            "whatsapp_call": "Start a WhatsApp call",
+            "send_email": "Send an email",
+            "delete_event": "Delete a calendar event",
+            "create_event": "Create a calendar event",
+            "discord_send_message": "Send a Discord message",
+            "telegram_message_user": "Send a Telegram message",
+        }
+        return titles.get(name, name.replace("_", " ").capitalize())
+
+    @staticmethod
+    def _humanize_field(name: str) -> str:
+        return {"contact": "Contact", "message": "Message", "user": "Recipient",
+                "email": "Email", "subject": "Subject", "body": "Message"}.get(
+                    name.lower(), name.replace("_", " ").capitalize())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        if winsound:
+            try:
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+            except OSError:
+                QApplication.beep()
+        else:
+            QApplication.beep()
+        if self._answer is not None:
+            self._answer.setFocus()
+
+    def _finish(self, result):
+        if self._finished:
+            return
+        self._finished = True
+        self._on_result(result)
+        self.close()
+
+    def _approve(self):
+        self._finish(True)
+
+    def _submit_answer(self):
+        self._finish(self._answer.text() if self._answer else "")
+
+    def _cancel(self):
+        self._finish(False if self._kind == "confirm" else "")
+
+    def closeEvent(self, event):
+        if not self._finished:
+            self._finished = True
+            self._on_result(False if self._kind == "confirm" else "")
+        super().closeEvent(event)
 
 
 class _OrbWidget(QWidget):
@@ -263,6 +443,7 @@ class OrbOverlay:
     def _run(self):
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.widget = _OrbWidget(self._size, self._top_margin)
+        self._notifications = {}
         self._ready.set()
 
         poll_timer = QTimer()
@@ -283,6 +464,22 @@ class OrbOverlay:
                     self.widget.set_target_level(payload)
                 elif action == "caption":
                     self.widget.set_caption(payload)
+                elif action == "notification":
+                    dialog_id, title, message, kind, callback = payload
+                    if dialog_id in self._notifications:
+                        self._notifications[dialog_id].close()
+
+                    def finish(result, key=dialog_id, done=callback):
+                        self._notifications.pop(key, None)
+                        done(result)
+
+                    popup = _ApprovalPopup(title, message, kind, finish)
+                    self._notifications[dialog_id] = popup
+                    popup.show()
+                elif action == "close_notification":
+                    popup = self._notifications.pop(payload, None)
+                    if popup:
+                        popup.close()
         except queue.Empty:
             pass
 
@@ -297,6 +494,13 @@ class OrbOverlay:
 
     def update_caption(self, text: str):
         self._queue.put(("caption", text))
+
+    def show_notification(self, dialog_id: str, title: str, message: str,
+                          kind: str, on_result):
+        self._queue.put(("notification", (dialog_id, title, message, kind, on_result)))
+
+    def close_notification(self, dialog_id: str):
+        self._queue.put(("close_notification", dialog_id))
 
 
 _orb: OrbOverlay | None = None

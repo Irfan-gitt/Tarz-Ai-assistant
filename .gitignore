@@ -5,6 +5,7 @@ env/
 .env
 .env.*
 !.env.example
+config_settings/voice_settings.json
 .vscode/
 *.log
 .DS_Store

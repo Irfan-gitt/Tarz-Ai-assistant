@@ -99,8 +99,11 @@ def play_done_chime():
     pygame.mixer.Sound(DONE_CHIME_PATH).play()
 
 
-def _open_stream_kwargs():
+def _open_stream_kwargs(input_device=None):
     device, hostapi_name = get_best_input_device()
+    if input_device is not None:
+        device = input_device
+        hostapi_name = sd.query_hostapis()[sd.query_devices(device, "input")["hostapi"]]["name"]
     kwargs = dict(
         device=device,
         samplerate=SAMPLE_RATE,
@@ -114,11 +117,11 @@ def _open_stream_kwargs():
     return kwargs
 
 
-def wait_for_wake_word():
+def wait_for_wake_word(stop_event=None, input_device=None):
     ring = collections.deque(maxlen=int(WINDOW_SECONDS * SAMPLE_RATE))
     print("👂 Always listening for wake word (say 'Tarz')...")
 
-    with sd.InputStream(**_open_stream_kwargs()):
+    with sd.InputStream(**_open_stream_kwargs(input_device)):
         global _ducking_protected
         if not _ducking_protected:
             protect_process_from_ducking("Spotify.exe")
@@ -126,13 +129,21 @@ def wait_for_wake_word():
 
         blocks_since_check = 0
         while True:
-            block = _audio_q.get()
+            try:
+                block = _audio_q.get(timeout=0.25)
+            except queue.Empty:
+                if stop_event is not None and stop_event.is_set():
+                    return False
+                continue
+
+            if stop_event is not None and stop_event.is_set():
+                return False
 
             if wake_hotkey_event.is_set():
                 wake_hotkey_event.clear()
                 print("⌨️  Wake hotkey pressed — skipping wake word.")
                 get_orb().show()
-                return
+                return True
 
             ring.extend(block)
             blocks_since_check += 1
@@ -154,4 +165,4 @@ def wait_for_wake_word():
             if "hey" in text:
                 print(f"🎯 Wake word detected in: {text!r}")
                 get_orb().show()
-                return
+                return True

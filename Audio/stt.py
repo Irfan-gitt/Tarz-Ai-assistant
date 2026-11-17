@@ -40,7 +40,7 @@ def _get_client(key):
     return genai.Client(api_key=key)
 
 
-async def _stream_one_utterance(timeout: float | None, cfg: dict, key: str) -> str:
+async def _stream_one_utterance(timeout: float | None, cfg: dict, key: str, input_device=None) -> str:
     """
     Connects and streams microphone audio through one configured model.
     """
@@ -93,6 +93,9 @@ async def _stream_one_utterance(timeout: float | None, cfg: dict, key: str) -> s
                     get_orb().update_level(min(rms * 4, 1.0))
 
                 device, hostapi_name = get_best_input_device()
+                if input_device is not None:
+                    device = input_device
+                    hostapi_name = sd.query_hostapis()[sd.query_devices(device, "input")["hostapi"]]["name"]
                 play_wake_beep()
                 print("🎤 Speak now...")
 
@@ -136,7 +139,7 @@ async def _stream_one_utterance(timeout: float | None, cfg: dict, key: str) -> s
         raise
 
 
-async def _stream_one_utterance_cartesia(timeout: float | None, cfg: dict, key: str) -> str:
+async def _stream_one_utterance_cartesia(timeout: float | None, cfg: dict, key: str, input_device=None) -> str:
     client = AsyncCartesia(api_key=key)
     result = {"text": None}
 
@@ -184,6 +187,9 @@ async def _stream_one_utterance_cartesia(timeout: float | None, cfg: dict, key: 
                     get_orb().update_level(min(rms * 4, 1.0))
 
                 device, hostapi_name = get_best_input_device()
+                if input_device is not None:
+                    device = input_device
+                    hostapi_name = sd.query_hostapis()[sd.query_devices(device, "input")["hostapi"]]["name"]
                 play_wake_beep()
                 print("🎤 Speak now... (Cartesia fallback)")
 
@@ -223,17 +229,18 @@ async def _stream_one_utterance_cartesia(timeout: float | None, cfg: dict, key: 
         await client.close()
 
 
-def live_listen(timeout: float | None = None) -> str:
+def live_listen(timeout: float | None = None, provider: str = "auto", input_device=None) -> str:
     """Drop-in sync replacement for input('You:') — blocks until one spoken
     utterance is transcribed (or timeout elapses, returning ''). Tries Gemini
     first (rotating keys), falls back to Cartesia Ink-2 if every Gemini key fails."""
     def call(name, cfg, key):
         if name == "stt_gemini":
-            return asyncio.run(_stream_one_utterance(timeout, cfg, key))
-        return asyncio.run(_stream_one_utterance_cartesia(timeout, cfg, key))
+            return asyncio.run(_stream_one_utterance(timeout, cfg, key, input_device))
+        return asyncio.run(_stream_one_utterance_cartesia(timeout, cfg, key, input_device))
 
     try:
-        return get_gateway().run(STT_MODELS, call)
+        models = {"gemini": ["stt_gemini"], "cartesia": ["stt_cartesia"]}.get(provider, STT_MODELS)
+        return get_gateway().run(models, call)
     except AllModelsFailed as e:
         print(f"[STT] All speech recognition models failed: {e}")
         return ""
