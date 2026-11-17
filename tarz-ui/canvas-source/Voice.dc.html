@@ -1,50 +1,40 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>TARZ</title><script src="./support.js"></script></head><body><x-dc><helmet><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap" rel="stylesheet"><style>*{box-sizing:border-box}
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>TARZ</title><script src="./support.js"></script></head><body><x-dc><helmet><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Geist+Mono&display=swap" rel="stylesheet"><style>*{box-sizing:border-box}
 body{margin:0}
 a{color:inherit;text-decoration:none}
-.app{width:1280px;height:800px;display:flex;background:#fff;font-family:Geist,Inter,system-ui,sans-serif;color:#171717;font-size:14px;line-height:20px;letter-spacing:-0.28px;overflow:hidden}
-.sb{width:240px;flex:none;border-right:1px solid #ebebeb;background:#fafafa;padding:20px 12px;display:flex;flex-direction:column;gap:4px}
-.nv{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:9999px;color:#4d4d4d}
-.nv.on{background:#fff;color:#171717;font-weight:500;box-shadow:0 0 0 1px #ebebeb}
-.nv svg,.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.main{flex:1;min-width:0;display:flex;flex-direction:column}
-.top{height:64px;flex:none;border-bottom:1px solid #ebebeb;display:flex;align-items:center;justify-content:space-between;padding:0 24px}
-.h{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-0.6px;margin:0}
-.mono{font-family:Geist Mono,ui-monospace,monospace;font-size:12px;line-height:16px;letter-spacing:0;color:#666}
-.card{border:1px solid #ebebeb;border-radius:12px;padding:20px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-.btn{background:#171717;color:#fff;border:0;border-radius:9999px;padding:8px 16px;font:500 14px Geist,Inter,sans-serif;letter-spacing:-0.28px}
-.btn2{background:#fff;color:#171717;border:1px solid #ebebeb;border-radius:9999px;padding:7px 14px;font:500 14px Geist,Inter,sans-serif;letter-spacing:-0.28px}
-.inp{height:40px;width:100%;border:1px solid #ebebeb;border-radius:6px;padding:0 12px;font:14px Geist Mono,ui-monospace,monospace;color:#171717;background:#fff}
-.bdg{display:inline-flex;align-items:center;gap:6px;border-radius:9999px;background:#f5f5f5;color:#4d4d4d;padding:2px 10px;font-size:12px;line-height:16px;letter-spacing:0}
-.dot{width:8px;height:8px;border-radius:50%;background:#29bc9b;flex:none}
+.app{width:1280px;height:800px;display:flex;background:#0a0a0a;font-family:Inter,system-ui,sans-serif;color:#fff;font-size:14px;line-height:20px;overflow:hidden}
+.sb{width:240px;flex:none;border-right:1px solid #212327;background:#0a0a0a;padding:20px 12px;display:flex;flex-direction:column;gap:4px}
+.nv{display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:8px;color:#dadbdf;border-left:2px solid transparent}
+.nv.on{background:#1a1c20;color:#fff;border-left-color:#fff}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.top{height:64px;flex:none;border-bottom:1px solid #212327;display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:relative}
+.h{font-size:20px;line-height:28px;font-weight:400;margin:0}
+.mono{font-family:"Geist Mono",ui-monospace,monospace;font-size:12px;line-height:16px;letter-spacing:1.2px;text-transform:uppercase;color:#7d8187}
+.card{border:1px solid #212327;border-radius:8px;padding:24px;background:#191919}
+.btn{background:#fff;color:#0a0a0a;border:1px solid #fff;border-radius:9999px;padding:4px 14px;font:400 14px Inter,sans-serif;height:32px}
+.btn2{background:#0a0a0a;color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:9999px;padding:8px 16px;font:400 14px Inter,sans-serif}
+.inp{height:44px;width:100%;border:1px solid #212327;border-radius:8px;padding:0 16px;font:16px Inter,sans-serif;color:#fff;background:#1a1c20}
+.pill{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.25);border-radius:9999px;padding:4px 12px}
+.dot{width:8px;height:8px;border-radius:50%;background:#ff7a17;flex:none}
 .row{display:flex;align-items:center;gap:12px}
-.seg{display:flex;gap:2px;background:#f5f5f5;border-radius:9999px;padding:3px}
-.seg span{padding:5px 14px;border-radius:9999px;color:#4d4d4d}
-.seg .on{background:#fff;color:#171717;font-weight:500;box-shadow:0 0 0 1px #ebebeb}
-.lbl{display:block;font-size:12px;line-height:16px;color:#666;margin-bottom:6px}
-.sec{font-family:Geist Mono,ui-monospace,monospace;font-size:12px;letter-spacing:0;color:#666;text-transform:uppercase;margin:0 0 12px}</style></helmet><div class="app">
-<aside class="sb"><div class="row" style="padding:4px 12px 20px"><b style="font-size:18px;font-weight:600;letter-spacing:-0.6px">TARZ</b><span class="bdg mono">v2</span></div><a class="nv" href="#"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12z"/></svg>Chat</a><a class="nv on" href="#"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Voice &amp; Mode</a><a class="nv" href="#"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/></svg>Providers &amp; Keys</a><a class="nv" href="#"><svg viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></svg>Integrations</a><a class="nv" href="#"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>Permissions</a><a class="nv" href="#"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg>Memory</a><div style="flex:1"></div><div class="card" style="padding:12px;border-radius:8px"><div class="row" style="gap:8px"><span class="dot"></span><b style="font-weight:500">Wake word on</b></div><div class="mono" style="margin-top:4px">Free tier · 3 keys active</div></div></aside>
-<div class="main"><div class="top"><h1 class="h">Voice &amp; mode</h1><button class="btn2" type="button">Test voice</button></div>
-<div style="flex:1;padding:24px;display:flex;flex-direction:column;gap:20px;overflow:hidden">
-<div><p class="sec">How TARZ works</p><div class="row" style="align-items:stretch">
-<div class="card" style="flex:1;background:#fff"><b style="font-weight:600;font-size:16px">Chat only</b><p style="margin:6px 0 0;color:#4d4d4d">Type to talk. Mic stays off.</p></div>
-<div class="card" style="flex:1;background:#fff"><b style="font-weight:600;font-size:16px">Hotkey</b><p style="margin:6px 0 0;color:#4d4d4d">Hold a key to speak, release to send.</p></div>
-<div class="card" style="flex:1;background:#171717;color:#fff"><b style="font-weight:600;font-size:16px">Always listening</b><p style="margin:6px 0 0;color:#d4d4d4">Say the wake word, like Alexa. Runs locally.</p></div>
-<div class="card" style="flex:1;background:#fff"><b style="font-weight:600;font-size:16px">Hybrid</b><p style="margin:6px 0 0;color:#4d4d4d">Chat window plus wake word.</p></div></div></div>
-<div class="row" style="align-items:flex-start;gap:20px">
-<div class="card" style="flex:1"><p class="sec">Speech to text</p>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="stt" checked aria-label="Gemini Live" style="accent-color:#171717"><span>Gemini Live</span></div><span class="bdg">Free</span></div>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="stt"  aria-label="Whisper on this PC" style="accent-color:#171717"><span>Whisper on this PC</span></div><span class="bdg">Free · offline</span></div>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="stt"  aria-label="Cartesia ink-2" style="accent-color:#171717"><span>Cartesia ink-2</span></div><span class="bdg">Free tier</span></div>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="stt"  aria-label="OpenAI Whisper" style="accent-color:#171717"><span>OpenAI Whisper</span></div><span class="bdg">Paid</span></div></div>
-<div class="card" style="flex:1"><p class="sec">Text to speech</p>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="tts" checked aria-label="Groq Orpheus" style="accent-color:#171717"><span>Groq Orpheus</span></div><span class="bdg">Free</span></div>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="tts"  aria-label="Cartesia Sonic-3" style="accent-color:#171717"><span>Cartesia Sonic-3</span></div><span class="bdg">Free tier</span></div>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="tts"  aria-label="Windows voice" style="accent-color:#171717"><span>Windows voice</span></div><span class="bdg">Free · offline</span></div>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="tts"  aria-label="OpenAI TTS" style="accent-color:#171717"><span>OpenAI TTS</span></div><span class="bdg">Paid</span></div>
-<div class="row" style="justify-content:space-between;padding:10px 0;border-top:1px solid #ebebeb"><div class="row"><input type="radio" name="tts"  aria-label="Off, text only" style="accent-color:#171717"><span>Off, text only</span></div><span class="bdg"></span></div></div>
-<div class="card" style="width:300px;flex:none"><p class="sec">Wake word</p><label class="lbl" for="ww">Phrase</label><input id="ww" class="inp" value="hey tars"><label class="lbl" for="sn" style="margin-top:16px">Sensitivity</label><input id="sn" type="range" style="width:100%;accent-color:#171717"><label class="lbl" for="sp" style="margin-top:16px">Voice speed</label><input id="sp" type="range" style="width:100%;accent-color:#171717"></div>
-</div></div></div>
-</div></x-dc><script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+.lbl{display:block;margin-bottom:8px}
+.opt{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-top:1px solid #212327;color:#dadbdf}
+.opt input,input[type=range]{accent-color:#fff}</style></helmet><div class="app"><aside class="sb"><div class="row" style="padding:4px 16px 24px"><span style="font-size:20px">TARZ</span><span class="mono pill" style="padding:0 8px">v2</span></div><a class="nv" href="#"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12z"/></svg>Chat</a><a class="nv on" href="#"><svg class="ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Voice</a><div style="flex:1"></div><div class="card" style="padding:12px 16px"><div class="row" style="gap:8px"><span class="dot"></span><span class="mono" style="color:#fff">Wake word on</span></div><div class="mono" style="margin-top:6px;text-transform:none;letter-spacing:.6px">Say "hey tars"</div></div></aside><div class="main"><div class="top"><h1 class="h">Voice</h1><button class="btn" type="button">Test voice</button></div>
+<div style="flex:1;padding:24px;display:flex;flex-direction:column;gap:24px;overflow:hidden">
+<div><p class="mono" style="margin:0 0 12px">// How you talk to TARZ</p><div class="row" style="align-items:stretch">
+<div class="card" style="flex:1;padding:20px;"><div style="font-size:16px">Chat only</div><p style="margin:6px 0 0;color:#7d8187">Type to talk. Mic stays off.</p></div><div class="card" style="flex:1;padding:20px;"><div style="font-size:16px">Hotkey</div><p style="margin:6px 0 0;color:#7d8187">Hold a key, speak, release.</p></div><div class="card" style="flex:1;padding:20px;background:#fff;color:#0a0a0a;border-color:#fff"><div style="font-size:16px">Always listening</div><p style="margin:6px 0 0;color:#363a3f">Say the wake word, like Alexa.</p></div><div class="card" style="flex:1;padding:20px;"><div style="font-size:16px">Hybrid</div><p style="margin:6px 0 0;color:#7d8187">Chat window plus wake word.</p></div></div></div>
+<div class="row" style="align-items:flex-start;gap:24px">
+<div class="card" style="flex:1"><p class="mono" style="margin:0 0 16px">Input</p>
+<label class="mono lbl" for="mic">Microphone</label><select id="mic" class="inp" style="margin-bottom:16px"><option>Default microphone</option><option>Headset microphone</option></select>
+<p class="mono" style="margin:0 0 4px">Speech to text</p>
+<label class="opt"><span class="row" style="gap:12px"><input type="radio" name="stt" checked>Gemini Live</span><span class="mono">Free</span></label><label class="opt"><span class="row" style="gap:12px"><input type="radio" name="stt" >Whisper on this PC</span><span class="mono">Offline</span></label><label class="opt"><span class="row" style="gap:12px"><input type="radio" name="stt" >Cartesia ink-2</span><span class="mono">Free tier</span></label>
+<label class="mono lbl" for="ww" style="margin-top:16px">Wake word</label><input id="ww" class="inp" value="hey tars"></div>
+<div class="card" style="flex:1"><p class="mono" style="margin:0 0 16px">Output</p>
+<label class="mono lbl" for="spk">Speaker</label><select id="spk" class="inp" style="margin-bottom:16px"><option>Default speakers</option><option>Headphones</option></select>
+<p class="mono" style="margin:0 0 4px">Text to speech</p>
+<label class="opt"><span class="row" style="gap:12px"><input type="radio" name="tts" checked>Groq Orpheus</span><span class="mono">Free</span></label><label class="opt"><span class="row" style="gap:12px"><input type="radio" name="tts" >Cartesia Sonic-3</span><span class="mono">Free tier</span></label><label class="opt"><span class="row" style="gap:12px"><input type="radio" name="tts" >Windows voice</span><span class="mono">Offline</span></label><label class="opt"><span class="row" style="gap:12px"><input type="radio" name="tts" >Off, text only</span><span class="mono"></span></label>
+<div class="row" style="gap:24px;margin-top:16px"><div style="flex:1"><label class="mono lbl" for="sp">Speed</label><input id="sp" type="range" style="width:100%"></div><div style="flex:1"><label class="mono lbl" for="vl">Volume</label><input id="vl" type="range" style="width:100%"></div></div></div>
+</div></div></div></div></x-dc><script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
 class Component extends DCLogic {
 renderVals() { return {}; }
 }

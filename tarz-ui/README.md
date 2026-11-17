@@ -1,7 +1,5 @@
 # TARZ UI
 
-- index.html: open in a browser, links to each screen
-- screens/: standalone HTML per screen (1280px wide desktop layout, Geist font loads from Google Fonts)
-- canvas-source/: original canvas files, for re-importing into the design editor
+The desktop app has two screens: Chat and Speech options. Run `launch-v3-ui.bat` from the project root to use them with the v3 backend.
 
-Style reference: Vercel-inspired DESIGN.md (ink #171717, hairline #ebebeb, pill buttons, mesh gradient at hero scale only).
+Speech provider and audio-device preferences are saved locally in `config_settings/voice_settings.json`. API credentials continue to come from the existing `.env` file.
