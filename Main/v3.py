@@ -125,9 +125,20 @@ SINGLE_TOOLS = [_as_tool(t) for t in SINGLE_TOOLS]
 DEDICATED_TOOLS = [_as_tool(t) for t in DEDICATED_TOOLS]
 # ---------------- HUMAN IN THE LOOP (shared) ----------------
 YES = {"y", "yes", "yeah", "yep", "ok", "sure", "do it"}
+_UI_ASK_HOOK = None
+_UI_CONFIRM_HOOK = None
+PRINT_OUTPUT = True
+
+
+def set_ui_hooks(ask=None, confirm=None):
+    """Route questions and confirmations to a desktop UI when one is present."""
+    global _UI_ASK_HOOK, _UI_CONFIRM_HOOK
+    _UI_ASK_HOOK, _UI_CONFIRM_HOOK = ask, confirm
 
 
 def ask_human(question: str) -> str:
+    if _UI_ASK_HOOK is not None:
+        return _UI_ASK_HOOK(question)
     if VOICE_MODE:
         speak(question)
         return live_listen()
@@ -135,7 +146,39 @@ def ask_human(question: str) -> str:
 
 
 def human_in_the_loop(question: str) -> bool:
+    if _UI_CONFIRM_HOOK is not None:
+        return bool(_UI_CONFIRM_HOOK(question))
     return ask_human(f"{question} (yes/no)").strip().lower() in YES
+
+
+def _visible_text(content) -> str:
+    """Keep only readable text from provider content blocks, excluding signatures/reasoning."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, (list, tuple)):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+        elif getattr(block, "type", None) in {"text", "output_text"}:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _replayable_ai_message(message):
+    """Replay tool calls without provider-private reasoning/signature metadata."""
+    kwargs = {"content": _visible_text(message.content),
+              "tool_calls": getattr(message, "tool_calls", None) or []}
+    if getattr(message, "id", None):
+        kwargs["id"] = message.id
+    return AIMessage(**kwargs)
 
 
 # ---------------- GUARDRAILS (input) ----------------
@@ -193,9 +236,9 @@ def chat(state: State) -> dict:
 
         calls = getattr(ai, "tool_calls", None) or []
         if not calls:
-            return {"last_result": str(ai.content), "last_ok": True}
+            return {"last_result": _visible_text(ai.content) or "I couldn't get a text response.", "last_ok": True}
 
-        local.append(ai)
+        local.append(_replayable_ai_message(ai))
         for call in calls:
             check_cancel()
             tool_fn = tool_map.get(call["name"])
@@ -259,10 +302,10 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
             return {"last_result": "All my models are down right now, try again in a bit.",
                     "last_ok": False}
 
-        local.append(ai)
+        local.append(_replayable_ai_message(ai))
         calls = getattr(ai, "tool_calls", None) or []
         if not calls:
-            return {"last_result": str(ai.content), "last_ok": not last_err}
+            return {"last_result": _visible_text(ai.content) or "I couldn't get a text response.", "last_ok": not last_err}
 
         for call in calls:
             check_cancel()
@@ -451,7 +494,8 @@ def memory_extraction(state: State) -> dict:
 # ---------------- SPEAK ----------------
 def speak_output(state: State) -> dict:
     text = state.get("spoken") or state.get("final") or "Done."
-    print(f"TARZ: {text}")
+    if PRINT_OUTPUT:
+        print(f"TARZ: {text}")
     if VOICE_MODE:
         speak(text)
     # history stays masked
@@ -508,10 +552,6 @@ def listen() -> str:
         wait_for_wake_word()
         return live_listen()
     return input("You: ")
-
-
-print([t.__name__ for t in SINGLE_TOOLS +
-      DEDICATED_TOOLS if not hasattr(t, "name")])
 
 
 def main():
