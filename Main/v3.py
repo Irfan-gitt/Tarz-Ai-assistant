@@ -80,6 +80,11 @@ def _unattended() -> bool:
     return getattr(_local, "unattended", False)
 
 
+def _approved() -> bool:
+    """True only inside a scheduled job whose risky actions the user approved at schedule time."""
+    return _unattended() and getattr(_local, "approved", False)
+
+
 # ---------------- STATE ----------------
 class State(TypedDict, total=False):
     messages: Annotated[list, add_messages]
@@ -162,7 +167,7 @@ def ask_human(question: str) -> str:
 
 
 def human_in_the_loop(question: str) -> bool:
-    if _unattended():  # NEW: risky actions are declined when nobody can approve them
+    if _unattended():  # NEW: nobody can answer live; named risky tools use _approved() instead
         return False
     if _UI_CONFIRM_HOOK is not None:
         return bool(_UI_CONFIRM_HOOK(question))
@@ -345,8 +350,13 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
             else:
                 try:
                     real_args = _restore_args(args)
-                    if name in RISKY_TOOLS and not human_in_the_loop(
-                            f"Run {name} with {real_args}?"):
+                    if name in RISKY_TOOLS:
+                        # NEW: scheduled job -> approval was given when it was scheduled
+                        ok = _approved() if _unattended() else human_in_the_loop(
+                            f"Run {name} with {real_args}?")
+                    else:
+                        ok = True
+                    if not ok:
                         result = "Error: the user declined this action."
                     else:
                         result = tool_fn.invoke(real_args)
@@ -401,6 +411,8 @@ Rules:
   single step. Its task must say to use schedule_task and give the action WITHOUT the time words, plus the
   time exactly as the user said it. NEVER run the action now. Examples of the shape:
   "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'".
+- The scheduled task must be COMPLETE (song, contact, message text). If a detail is missing, ask for it
+  with ask_user BEFORE calling schedule_task.
 - Questions like "what is scheduled" or "cancel my 11 pm task" are ONE single step (list_scheduled / cancel_scheduled).
 - Each task must be self-contained: include names, text, times, and the browser name if the user gave one.
   Keep placeholders like <EMAIL_1> exactly as written.
@@ -574,10 +586,12 @@ def build_graph():
 
 
 # ---------------- SCHEDULED RUNS ----------------
-def run_scheduled(task: str):
-    """Called by the scheduler thread when a job is due: runs it like a fresh user request."""
+def run_scheduled(task: str, approved: bool = False):
+    """Called by the scheduler thread when a job is due: runs it like a fresh user request.
+    approved = the user allowed risky actions (send/call/delete) when they scheduled it."""
     with graph_lock:
         _local.unattended = True
+        _local.approved = approved
         cancel_event.clear()
         try:
             GRAPH.invoke({"user_text": task, "messages": []},
@@ -588,6 +602,7 @@ def run_scheduled(task: str):
             print(f"[scheduled error] {type(e).__name__}: {e}")
         finally:
             _local.unattended = False
+            _local.approved = False
 
 
 # ---------------- MAIN ----------------
@@ -610,7 +625,7 @@ def main():
                     ask=ask_human, cancel=cancel_event)
     GRAPH = build_graph()
     # NEW: after the graph exists, before the loop
-    start_scheduler(run_scheduled)
+    start_scheduler(run_scheduled, confirm=human_in_the_loop)
     history: list = []
 
     while True:
