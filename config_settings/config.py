@@ -15,7 +15,7 @@ load_dotenv()
 
 
 def _keys(*names):
-    return tuple(v for v in (os.getenv(n) for n in names) if v)
+    return tuple(dict.fromkeys(v for v in (os.getenv(n) for n in names) if v))
 
 
 # --- API keys: every provider exposes ALL its keys, the gateway picks one ---
@@ -23,9 +23,9 @@ GROQ_ALL_KEYS = _keys("GROQ_API_KEY_1", "GROQ_API_KEY_2", "GROQ_API_KEY_3")
 GROQ_VISION_ALL_KEYS = _keys("GROQ_VISION_KEY_1", "GROQ_VISION_KEY_2")
 GEMINI_ALL_KEYS = _keys("GEMINI_KEY_1", "GEMINI_KEY_2",
                         "GEMINI_KEY_3", "GEMINI_KEY_4", "GEMINI_KEY_5")
-OPENROUTER_ALL_KEYS = _keys("OPENROUTER_API_KEY2")
+OPENROUTER_ALL_KEYS = _keys("OPENROUTER_API_KEY", "OPENROUTER_API_KEY2")
 MOONDREAM_ALL_KEYS = _keys("MOONDREAM_API_KEY")
-JEV_ALL_KEYS = _keys("OPENROUTER_API_KEY2")
+JEV_ALL_KEYS = OPENROUTER_ALL_KEYS
 CARTESIA_ALL_KEYS = _keys("CARTESIA_API_KEY")
 TAVILY_ALL_KEYS = _keys("TAVILY_API_KEY")
 OPENWEATHER_ALL_KEYS = _keys("OPENWEATHER_KEY")
@@ -42,6 +42,23 @@ API_KEYS = {
     "openweather": OPENWEATHER_ALL_KEYS,
     "jina": JINA_ALL_KEYS,
 }
+
+
+def require_core_chat_provider() -> str:
+    """Require the Groq, Gemini, and Jina keys used by the core app."""
+    missing = [
+        name for name, keys in (
+            ("GROQ_API_KEY_1", GROQ_ALL_KEYS),
+            ("GEMINI_KEY_1", GEMINI_ALL_KEYS),
+            ("JINA_API_KEY", JINA_ALL_KEYS),
+        ) if not keys
+    ]
+    if missing:
+        raise RuntimeError(
+            "TARZ requires these API keys in your .env file: " + ", ".join(missing) +
+            ". Add a key for each required provider. Cartesia and other feature keys are optional."
+        )
+    return "Groq + Gemini + Jina"
 
 # Keyed by the PROVIDER model id (not your config name).
 # "shared": True = all keys of that provider share ONE bucket (Groq limits are per
