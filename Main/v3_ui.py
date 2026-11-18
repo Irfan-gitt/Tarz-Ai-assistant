@@ -31,6 +31,7 @@ DEFAULT_SETTINGS = {
 
 class Api:
     def __init__(self):
+        v3.require_core_chat_provider()
         self._dialog_condition = threading.Condition()
         self._dialog_answers = {}
         self._dialog_waiting = {}
