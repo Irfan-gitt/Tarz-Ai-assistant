@@ -1,4 +1,3 @@
-
 from langchain_core.messages import ToolMessage
 from dotenv import load_dotenv
 
@@ -44,6 +43,8 @@ from Tools.Dedicated_Tools.spotify_gui import spotify_play_playlist, spotify_sea
 from Tools.Dedicated_Tools.telegram_gui import telegram_message_user
 from Tools.Dedicated_Tools.whatsapp_gui import whatsapp_send_message, whatsapp_call
 from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_toggle_mute, discord_toggle_deafen, discord_answer_call, discord_decline_call
+from Tools.scheduler import schedule_task, list_scheduled, cancel_scheduled, start as start_scheduler
+
 from Tools.Autonomous_layer.autonomous_agent import computer_agent, set_human_hooks
 
 from langchain_core.tools import BaseTool, StructuredTool
@@ -68,6 +69,15 @@ load_dotenv()
 
 guard = Guardrails(ask=jev_ask)
 session_map: dict[str, str] = {}
+
+# NEW: scheduler plumbing
+graph_lock = threading.Lock()   # a user turn and a scheduled turn must never overlap
+_local = threading.local()      # _local.unattended = True while a scheduled job runs
+GRAPH = None
+
+
+def _unattended() -> bool:
+    return getattr(_local, "unattended", False)
 
 
 # ---------------- STATE ----------------
@@ -104,6 +114,7 @@ SINGLE_TOOLS = [
     create_event, list_events, delete_event,
     wether_app, rt_data, translate, news_update,
     media_play_pause, media_previous_track, media_next_track,
+    schedule_task, list_scheduled, cancel_scheduled,   # NEW
 ]
 
 DEDICATED_TOOLS = [
@@ -140,6 +151,8 @@ def set_ui_hooks(ask=None, confirm=None):
 
 
 def ask_human(question: str) -> str:
+    if _unattended():  # NEW: nobody is there to answer a scheduled job
+        return "Nobody is available to answer. Use your best judgment or stop."
     if _UI_ASK_HOOK is not None:
         return _UI_ASK_HOOK(question)
     if VOICE_MODE:
@@ -149,6 +162,8 @@ def ask_human(question: str) -> str:
 
 
 def human_in_the_loop(question: str) -> bool:
+    if _unattended():  # NEW: risky actions are declined when nobody can approve them
+        return False
     if _UI_CONFIRM_HOOK is not None:
         return bool(_UI_CONFIRM_HOOK(question))
     return ask_human(f"{question} (yes/no)").strip().lower() in YES
@@ -285,6 +300,8 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
     now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
     sys_msg = SystemMessage(
         content=f"{SYSTEM}\n\n{branch_prompt}\nCurrent date/time: {now}")
+    if _unattended():  # NEW: a scheduled job must never schedule more jobs (no loops)
+        tools = [t for t in tools if t.name != "schedule_task"]
     tools = [*tools, ask_user]
     tool_map = {t.name: t for t in tools}
 
@@ -369,7 +386,7 @@ PLANNER_PROMPT = """You are the planner for a desktop voice assistant. Reply wit
 Routes:
 - chat: conversation, questions, opinions, anything needing no action. task = "".
 - single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email, calendar,
-  weather, news, translate, volume, media play/pause/next/previous.
+  weather, news, translate, volume, media play/pause/next/previous, schedule/list/cancel a scheduled task.
 - dedicated: actions inside the Spotify app, WhatsApp, Telegram or Discord (play a song, send a message, call).
 - autonomous: everything else. Anything that needs several clicks or typing, anything on a website or in a
   browser, downloads, searching the web, filling forms, or any job no single or dedicated tool covers.
@@ -380,14 +397,21 @@ Rules:
 - A task like "download X from the official website using Brave" is exactly ONE autonomous step.
 - One clear request = ONE step. Never split one app action ("play X on spotify" is ONE step).
 - Use more than one step only for truly different jobs ("set a timer, then email Sam").
+- If the request has a FUTURE time or a repeat ("at 11 pm", "tomorrow morning", "every day at 7"), plan ONE
+  single step. Its task must say to use schedule_task and give the action WITHOUT the time words, plus the
+  time exactly as the user said it. NEVER run the action now. Examples of the shape:
+  "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'".
+- Questions like "what is scheduled" or "cancel my 11 pm task" are ONE single step (list_scheduled / cancel_scheduled).
 - Each task must be self-contained: include names, text, times, and the browser name if the user gave one.
   Keep placeholders like <EMAIL_1> exactly as written.
 - Use the memory block to resolve things like "my usual playlist".
 - Maximum 4 steps.
 
-Example:
+Examples:
 user: download spotify from the official website in brave
-[{"route": "autonomous", "task": "Download the Spotify installer from the official Spotify website using Brave"}]"""
+[{"route": "autonomous", "task": "Download the Spotify installer from the official Spotify website using Brave"}]
+user: play sailor song on spotify at 11 pm
+[{"route": "single", "task": "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'"}]"""
 
 
 def _make_plan(state: State) -> list:
@@ -476,7 +500,7 @@ _last_save: threading.Thread | None = None
 
 def memory_extraction(state: State) -> dict:
     global _last_save
-    if state.get("blocked"):
+    if state.get("blocked") or _unattended():  # NEW: scheduled runs are not conversations
         return {}
 
     masked_reply = state.get("final") or ""
@@ -549,6 +573,23 @@ def build_graph():
     return graph
 
 
+# ---------------- SCHEDULED RUNS ----------------
+def run_scheduled(task: str):
+    """Called by the scheduler thread when a job is due: runs it like a fresh user request."""
+    with graph_lock:
+        _local.unattended = True
+        cancel_event.clear()
+        try:
+            GRAPH.invoke({"user_text": task, "messages": []},
+                         {"recursion_limit": 40})
+        except TaskCancelled:
+            print("TARZ: scheduled task cancelled.")
+        except Exception as e:
+            print(f"[scheduled error] {type(e).__name__}: {e}")
+        finally:
+            _local.unattended = False
+
+
 # ---------------- MAIN ----------------
 def listen() -> str:
     if VOICE_MODE:
@@ -558,6 +599,7 @@ def listen() -> str:
 
 
 def main():
+    global GRAPH
     require_core_chat_provider()
     on = os.getenv("LANGSMITH_TRACING", "").lower(
     ) == "true" and bool(os.getenv("LANGSMITH_API_KEY"))
@@ -566,7 +608,9 @@ def main():
 
     set_human_hooks(confirm=human_in_the_loop,
                     ask=ask_human, cancel=cancel_event)
-    graph = build_graph()
+    GRAPH = build_graph()
+    # NEW: after the graph exists, before the loop
+    start_scheduler(run_scheduled)
     history: list = []
 
     while True:
@@ -581,8 +625,9 @@ def main():
 
         cancel_event.clear()
         try:
-            out = graph.invoke({"user_text": text, "messages": history},
-                               {"recursion_limit": 40})
+            with graph_lock:  # NEW
+                out = GRAPH.invoke({"user_text": text, "messages": history},
+                                   {"recursion_limit": 40})
             history = out["messages"][-WINDOW:]
         except TaskCancelled:
             print("TARZ: cancelled.")
