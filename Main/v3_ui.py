@@ -12,6 +12,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import sounddevice as sd
 import webview
+import keyboard
 
 import v3
 from Audio.stt import live_listen
@@ -43,8 +44,15 @@ class Api:
         v3.start_scheduler(v3.run_scheduled, confirm=self._confirm_from_ui)
         self._history: list = []
         self._lock = threading.Lock()
+        self._request_running = threading.Event()
         self._events_lock = threading.Lock()
         self._events = []
+        self._stop_hotkey = None
+        try:
+            self._stop_hotkey = keyboard.add_hotkey(
+                "ctrl+shift+space", self.stop_current_task, suppress=False)
+        except Exception as exc:
+            self._events.append({"error": f"Global stop shortcut unavailable: {exc}"})
         self._listener_stop = threading.Event()
         self._listener_thread = None
         try:
@@ -123,6 +131,22 @@ class Api:
             overlay = get_orb()
             for dialog_id in ids:
                 overlay.close_notification(dialog_id)
+
+    def close(self):
+        self._stop_listener()
+        if self._stop_hotkey is not None:
+            try:
+                keyboard.remove_hotkey(self._stop_hotkey)
+            except Exception:
+                pass
+            self._stop_hotkey = None
+
+    def stop_current_task(self) -> dict:
+        """Request cancellation of the active chat or speech task."""
+        if not self._request_running.is_set():
+            return {"ok": False, "message": "TARZ is not working on a request."}
+        cancel_event.set()
+        return {"ok": True, "message": "Stopping TARZ…"}
 
     def _listen_in_background(self):
         while not self._listener_stop.is_set():
@@ -204,6 +228,7 @@ class Api:
             return {"ok": False, "error": "Type a message first."}
         with self._lock:
             cancel_event.clear()
+            self._request_running.set()
             try:
                 result = self._graph.invoke(
                     {"user_text": text, "messages": self._history}, {"recursion_limit": 40})
@@ -218,6 +243,8 @@ class Api:
                 return {"ok": False, "error": "Request cancelled."}
             except Exception as exc:
                 return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            finally:
+                self._request_running.clear()
 
     def new_chat(self) -> bool:
         with self._lock:
@@ -232,5 +259,5 @@ if __name__ == "__main__":
     window = webview.create_window("TARZ", page.as_uri(), js_api=api, width=1280, height=800,
                                    min_size=(720, 560), resizable=True)
     window.events.loaded += api._sync_listener
-    window.events.closed += api._stop_listener
+    window.events.closed += api.close
     webview.start()
