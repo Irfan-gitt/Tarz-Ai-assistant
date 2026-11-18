@@ -402,17 +402,29 @@ Routes:
   browser, downloads, searching the web, filling forms, or any job no single or dedicated tool covers.
 
 Rules:
+- SCHEDULING HAS PRIORITY OVER APP ROUTING: if the user asks to do anything later, after a delay,
+  at a future time, or on a repeating schedule, route it to SINGLE and use schedule_task. This applies
+  even when the action mentions WhatsApp, Spotify, email, or another dedicated app. Never route a
+  future action to a direct-send/play tool, and never offer to do it immediately instead.
+- Treat follow-ups such as "schedule it", "after two minutes", or a corrected time as updates to the
+  most recent unfinished scheduling request. Carry forward its action and details from conversation
+  history; ignore an earlier assistant claim that scheduling is unavailable if it conflicts with this.
 - NEVER plan low-level GUI actions (open an app, type text, press a key, click a button) as separate steps.
   If a job needs several UI actions, it is ONE autonomous step with the whole goal as the task.
 - A task like "download X from the official website using Brave" is exactly ONE autonomous step.
 - One clear request = ONE step. Never split one app action ("play X on spotify" is ONE step).
 - Use more than one step only for truly different jobs ("set a timer, then email Sam").
-- If the request has a FUTURE time or a repeat ("at 11 pm", "tomorrow morning", "every day at 7"), plan ONE
-  single step. Its task must say to use schedule_task and give the action WITHOUT the time words, plus the
-  time exactly as the user said it. NEVER run the action now. Examples of the shape:
+- For a future/repeating request, plan ONE single step whose task instructs the executor to call
+  schedule_task with the complete action (without time words) and the requested time/repeat. Keep the
+  time phrase exactly as the user said it. NEVER run the action now. Example:
   "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'".
-- The scheduled task must be COMPLETE (song, contact, message text). If a detail is missing, ask for it
-  with ask_user BEFORE calling schedule_task.
+- Before scheduling, check all details required to perform the action later. For a message this means
+  recipient AND exact message text; for music, song/playlist; for an event, title and time. If something
+  is missing, the executor must call ask_user to ask only for the missing detail, then schedule after
+  the user answers. Do not schedule an incomplete task and do not perform it immediately.
+- Scheduling a risky action triggers an approval dialog in the app while the user is present. Let the
+  scheduler tool request that approval; do not treat asking in chat as approval or claim it is scheduled
+  until the tool confirms success. If approval is declined, report that it was not scheduled.
 - Questions like "what is scheduled" or "cancel my 11 pm task" are ONE single step (list_scheduled / cancel_scheduled).
 - Each task must be self-contained: include names, text, times, and the browser name if the user gave one.
   Keep placeholders like <EMAIL_1> exactly as written.
@@ -423,7 +435,13 @@ Examples:
 user: download spotify from the official website in brave
 [{"route": "autonomous", "task": "Download the Spotify installer from the official Spotify website using Brave"}]
 user: play sailor song on spotify at 11 pm
-[{"route": "single", "task": "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'"}]"""
+[{"route": "single", "task": "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'"}]
+user: text Mummy on WhatsApp after 2 minutes
+[{"route": "single", "task": "Schedule a WhatsApp message to Mummy after 2 minutes. Message text is missing: ask the user for the exact text, then call schedule_task. Do not send now."}]
+user: in response to the pending request, say hey
+[{"route": "single", "task": "Schedule the previously requested WhatsApp message to Mummy with exact text 'hey' after 2 minutes. Call schedule_task; do not send now."}]
+user: schedule it for 11:32 instead
+[{"route": "single", "task": "Update the time on the most recent unfinished scheduled request to 11:32, preserve its action and supplied details, ask for any still-missing required detail, then call schedule_task. Do not perform now."}]"""
 
 
 def _make_plan(state: State) -> list:
