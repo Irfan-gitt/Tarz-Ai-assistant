@@ -39,6 +39,8 @@ class Api:
         v3.PRINT_OUTPUT = False
         v3.set_human_hooks(confirm=self._confirm_from_ui, ask=self._ask_from_ui, cancel=cancel_event)
         self._graph = v3.build_graph()
+        v3.GRAPH = self._graph
+        v3.start_scheduler(v3.run_scheduled, confirm=self._confirm_from_ui)
         self._history: list = []
         self._lock = threading.Lock()
         self._events_lock = threading.Lock()
