@@ -24,13 +24,23 @@ def start(runner, confirm=None):
     """runner(task, approved) runs a job. confirm(question) -> bool asks the user (attended only)."""
     global _runner, _confirm
     _runner, _confirm = runner, confirm
-    _sched.start()
+    if not _sched.running:
+        _sched.start()
 
 
 # module level so SQLite can store it; default keeps old jobs working
 def _fire(task: str, approved: bool = False):
     if _runner:
         _runner(task, approved)
+
+
+def _next_run_time(job):
+    """Return a job's next run time, including while APScheduler has it pending."""
+    try:
+        return job.next_run_time
+    except AttributeError:
+        now = datetime.now(job.trigger.timezone)
+        return job.trigger.get_next_fire_time(None, now)
 
 
 @tool
@@ -46,12 +56,17 @@ def schedule_task(task: str, when: str, repeat: str = "") -> str:
         # a time-only request means the next occurrence
         t = t + timedelta(days=1)
 
-    # approval is asked here, from the real user, never decided by the model
+    # Approval is requested while the user is present, never decided by the model.
     approved = False
-    if RISKY_WORDS.search(task) and _confirm is not None:
+    risky = bool(RISKY_WORDS.search(task))
+    if risky and _confirm is None:
+        return "I can't schedule this risky action because no attended approval UI is available."
+    if risky:
         approved = bool(_confirm(
             f"Schedule '{task}' for {t:%a %d %b, %I:%M %p}? Nobody will be asked again when it runs, "
             f"so it may send or act on its own. Allow that?"))
+        if not approved:
+            return "Not scheduled because you declined approval."
 
     if repeat == "daily":
         trig = CronTrigger(hour=t.hour, minute=t.minute)
@@ -64,16 +79,17 @@ def schedule_task(task: str, when: str, repeat: str = "") -> str:
         trig = DateTrigger(t)
     job = _sched.add_job(_fire, trig, args=[
                          task, approved], id=uuid.uuid4().hex[:8], name=task)
-    note = "" if approved or not RISKY_WORDS.search(
-        task) else " Risky actions will be skipped (not approved)."
-    return f"Scheduled '{task}' for {job.next_run_time:%a %d %b, %I:%M %p}." + note
+    next_run = _next_run_time(job)
+    return f"Scheduled '{task}' for {next_run:%a %d %b, %I:%M %p}."
 
 
 @tool
 def list_scheduled() -> str:
     """List all scheduled tasks."""
     jobs = _sched.get_jobs()
-    return "\n".join(f"{j.id}: {j.name} at {j.next_run_time:%a %d %b %I:%M %p}" for j in jobs) or "Nothing scheduled."
+    return "\n".join(
+        f"{j.id}: {j.name} at {_next_run_time(j):%a %d %b %I:%M %p}" for j in jobs
+    ) or "Nothing scheduled."
 
 
 @tool
