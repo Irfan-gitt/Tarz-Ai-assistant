@@ -146,7 +146,16 @@ class Api:
         if not self._request_running.is_set():
             return {"ok": False, "message": "TARZ is not working on a request."}
         cancel_event.set()
-        return {"ok": True, "message": "Stopping TARZ…"}
+        with self._dialog_condition:
+            dialog_ids = list(self._dialog_waiting)
+            for dialog_id, kind in self._dialog_waiting.items():
+                self._dialog_answers[dialog_id] = False if kind == "confirm" else ""
+            self._dialog_condition.notify_all()
+        if dialog_ids:
+            overlay = get_orb()
+            for dialog_id in dialog_ids:
+                overlay.close_notification(dialog_id)
+        return {"ok": True, "message": "Stopping TARZ..."}
 
     def _listen_in_background(self):
         while not self._listener_stop.is_set():
