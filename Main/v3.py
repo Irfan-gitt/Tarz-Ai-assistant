@@ -28,7 +28,10 @@ from langsmith import traceable
 from config_settings.guardrails import Guardrails, jev_ask, restore, HARD, PII_RULES, TAG, restore, jev_ask
 from config_settings.jev_gate import jev_gate
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
-from config_settings.config import TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS, CLASSIFY_LLMS
+from config_settings.config import (
+    TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS, CLASSIFY_LLMS,
+    require_core_chat_provider,
+)
 from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -555,6 +558,7 @@ def listen() -> str:
 
 
 def main():
+    require_core_chat_provider()
     on = os.getenv("LANGSMITH_TRACING", "").lower(
     ) == "true" and bool(os.getenv("LANGSMITH_API_KEY"))
     print(
