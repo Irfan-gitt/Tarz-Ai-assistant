@@ -256,103 +256,26 @@ pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
 
 ---
 
-## Environment Variables (API Keys)
+## API Keys
 
-Create a `.env` file in the project root with the following:
+Copy `.env.example` to `.env`. The current TARZ setup requires all three keys: `GROQ_API_KEY_1`, `GEMINI_KEY_1`, and `JINA_API_KEY`. Groq and Gemini provide the configured language-model paths, while Jina provides the embeddings used by memory.
 
-**Fill in every variable below — the code expects a value in each slot.** If you don't have a spare/second key for a given slot (a second vision key, extra Gemini keys, a second OpenRouter key, etc.), just reuse your existing key's value for that variable too instead of leaving it blank. A demo `.env` walkthrough is coming — the block below is a placeholder until then.
+Extra numbered keys for the same provider are optional and only add key rotation when a key is rate-limited. OpenRouter is an optional fallback. Other service keys are optional and only needed for their feature:
 
-```dotenv
-# Copy this file to .env and replace the empty values with your own keys.
-# Never commit .env or paste real keys into this file.
+| Key | Enables |
+|---|---|
+| `GROQ_VISION_KEY_1` | Groq screen-image analysis |
+| `MOONDREAM_API_KEY` | Cloud screen targeting (a local Moondream endpoint can be used instead) |
+| `CARTESIA_API_KEY` | Cartesia STT/TTS; Gemini STT and Groq TTS use the corresponding core keys |
+| `TAVILY_API_KEY` | Tavily web search; web search can fall back to DDGS |
+| `OPENWEATHER_KEY` | OpenWeather weather lookups |
+| `LANGSMITH_API_KEY` | Optional tracing only |
 
-# Core model providers
-OPENROUTER_API_KEY=
-OPENROUTER_API_KEY2=
-GROQ_API_KEY=
-GROQ_VISION_KEY_1=
-GROQ_VISION_KEY_2=
-GEMINI_KEY_1=
-GEMINI_KEY_2=
-GEMINI_KEY_3=
-GEMINI_KEY_4=
-GEMINI_KEY_5=
-CEREBRAS_API_KEY=
-CEREBRAS_API_KEY2=
-SAMBANOVA_API_KEY=
-GITHUB_TOKEN=
-
-# Tools and voice services
-OPENWEATHER_KEY=
-MOONDREAM_API_KEY=
-TAVILY_API_KEY=
-CARTESIA_API_KEY=
-
-# Optional LangSmith tracing
-LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=
-LANGSMITH_PROJECT=Tarz
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_HIDE_INPUTS=true
-LANGSMITH_HIDE_OUTPUTS=true
-
-# Legacy names used by Main/v0.py and a few older tools. Set these to the
-# same values as GROQ_API_KEY and OPENROUTER_API_KEY when using those files.
-groq_api=
-OPENROUTER_KEY=
-GEMINI_API_KEY=
-```
-
-| Variable | What it's for | Where to get it |
-|---|---|---|
-| `GROQ_API_KEY` | Primary tool-calling, classification, chat, and TTS (Orpheus) | [console.groq.com/keys](https://console.groq.com/keys) — free signup |
-| `GROQ_VISION_KEY_1`, `GROQ_VISION_KEY_2` | Screen vision (rotates between them on rate limits) | Same console — can be separate keys for more headroom |
-| `GEMINI_KEY_1`–`GEMINI_KEY_4` | Live speech-to-text (rotates across all provided keys) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free, no card required |
-| `OPENROUTER_API_KEY` | Fallback for tool-calling, classification, chat, and vision | [openrouter.ai/keys](https://openrouter.ai/keys) — free signup, still requires an account/key even for free models |
-| `CARTESIA_API_KEY` | Fallback TTS and STT | [play.cartesia.ai](https://play.cartesia.ai) — free tier available (personal/non-commercial use, credit-limited) |
-| `OPENWEATHER_KEY` | Weather tool | [openweathermap.org/api](https://openweathermap.org/api) — free tier, generate a key under "API keys" in your account |
-| `MOONDREAM_API_KEY` | GUI click targeting | [moondream.ai](https://moondream.ai/) — API key for Moondream |
-| `TAVILY_API_KEY` | Web search | [tavily.com](https://tavily.com/) — API key for web search |
-
-### Tip: use multiple Gemini keys for better reliability
-
-Gemini's free tier has per-key rate limits, and TARZ's live STT rotates automatically across every `GEMINI_KEY_*` you provide. For smoother performance, especially under heavy use, create 2–4 separate keys and add them as `GEMINI_KEY_1`, `GEMINI_KEY_2`, etc. — the code already looks for keys in this numbered pattern.
-
----
+The app checks for all three required keys at startup and prints which variables are missing. Cartesia is optional; speech can use the existing Gemini/Groq providers. Never share or commit your `.env` file.
 
 ## Running TARZ
 
-```bash
-python tarz_tray.py
-```
-IF YOU GOT ANY ERROR RUNNING THROUGH TARZ_TRAY.PY RUN WITH TARZ.PY INSIDE MAIN FILE 
-
-This starts TARZ in your system tray (look for the icon near your clock). Right-click the tray icon for options, including quitting.
-
-Once running, either:
-- Say **"Tarz"** to wake it, or
-- Press **`Ctrl+Shift+Space`** to skip the wake word and start listening immediately
-
-Press **`Ctrl+Space`** anytime to cancel whatever it's currently doing.
-
-### Run TARZ automatically on Windows startup
-
-**Option A — Startup folder (simplest):**
-
-1. Press `Win+R`, type `shell:startup`, press Enter — this opens your Startup folder.
-2. Right-click `tarz_tray.py` (or a `.bat` file that runs `venv\Scripts\python.exe tarz_tray.py` from your project folder) → Create shortcut.
-3. Move that shortcut into the Startup folder.
-4. TARZ now launches automatically at every login.
-
-**Option B — Task Scheduler (more reliable, runs hidden with no console window):**
-
-1. Open Task Scheduler → Create Task (not "Create Basic Task").
-2. **General tab:** name it, check "Run whether user is logged on or not" if you want it hidden, or "Run only when user is logged on" for a normal session.
-3. **Triggers tab:** New → "At log on".
-4. **Actions tab:** New → Program: `C:\path\to\Tarz-ai\venv\Scripts\pythonw.exe` (use `pythonw.exe`, not `python.exe`, to avoid a console window) → Arguments: `tarz_tray.py` → Start in: `C:\path\to\Tarz-ai`.
-5. Save. TARZ now starts silently in the background at every login.
-
----
+On Windows, run `launch-v3-ui.bat` from the project folder. It opens the current Chat + Speech desktop app. You can also run `python Main/v3_ui.py` from an activated project environment.
 
 ## Customizing TARZ
 
