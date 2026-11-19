@@ -30,6 +30,9 @@ CARTESIA_ALL_KEYS = _keys("CARTESIA_API_KEY")
 TAVILY_ALL_KEYS = _keys("TAVILY_API_KEY")
 OPENWEATHER_ALL_KEYS = _keys("OPENWEATHER_KEY")
 JINA_ALL_KEYS = _keys("JINA_API_KEY")
+# Optional paid engines
+OPENAI_ALL_KEYS = _keys("OPENAI_API_KEY_1", "OPENAI_API_KEY_2")
+ANTHROPIC_ALL_KEYS = _keys("ANTHROPIC_API_KEY_1", "ANTHROPIC_API_KEY_2")
 
 API_KEYS = {
     "groq": GROQ_ALL_KEYS,
@@ -41,24 +44,28 @@ API_KEYS = {
     "tavily": TAVILY_ALL_KEYS,
     "openweather": OPENWEATHER_ALL_KEYS,
     "jina": JINA_ALL_KEYS,
+    "openai": OPENAI_ALL_KEYS,
+    "anthropic": ANTHROPIC_ALL_KEYS,
 }
 
 
 def require_core_chat_provider() -> str:
-    """Require the Groq, Gemini, and Jina keys used by the core app."""
+    """Need at least 1 key each: Groq, Gemini, OpenRouter, Jina. Everything else is optional."""
     missing = [
-        name for name, keys in (
+        env for env, keys in (
             ("GROQ_API_KEY_1", GROQ_ALL_KEYS),
             ("GEMINI_KEY_1", GEMINI_ALL_KEYS),
+            ("OPENROUTER_API_KEY", OPENROUTER_ALL_KEYS),
             ("JINA_API_KEY", JINA_ALL_KEYS),
         ) if not keys
     ]
     if missing:
         raise RuntimeError(
-            "TARZ requires these API keys in your .env file: " + ", ".join(missing) +
-            ". Add a key for each required provider. Cartesia and other feature keys are optional."
+            "TARZ needs at least one key for each of these in your .env: " + ", ".join(missing) +
+            ". Extra keys, paid LLM keys, Cartesia, Tavily, weather and LangSmith are optional."
         )
-    return "Groq + Gemini + Jina"
+    return "Groq + Gemini + OpenRouter + Jina"
+
 
 # Keyed by the PROVIDER model id (not your config name).
 # "shared": True = all keys of that provider share ONE bucket (Groq limits are per
@@ -112,13 +119,37 @@ MODEL_CONFIGS = {
 }
 
 
+# --- Paid models (optional): change the model here, or set OPENAI_MODEL / ANTHROPIC_MODEL in .env ---
+# Defaults are medium-high, not top tier. No temperature on purpose: many newer
+# reasoning models reject custom values. Add it back if your model accepts it.
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+
+_PAID = {"timeout": 20, "max_retries": 0}
+for _p in ("tool", "classify", "plain"):
+    MODEL_CONFIGS[f"{_p}_openai"] = {
+        "provider": "openai", "model": OPENAI_MODEL, **_PAID}
+    MODEL_CONFIGS[f"{_p}_anthropic"] = {
+        "provider": "anthropic", "model": ANTHROPIC_MODEL, **_PAID}
+
+
+def _with_paid(prefix, free):
+    """Paid models go first, only if the user added that key. Free ones stay as fallback."""
+    paid = []
+    if ANTHROPIC_ALL_KEYS:
+        paid.append(f"{prefix}_anthropic")
+    if OPENAI_ALL_KEYS:
+        paid.append(f"{prefix}_openai")
+    return paid + free
+
+
 # --- Priority lists: first = preferred, the rest are fallbacks ---
-TOOL_CALLING_LLMS = ["tool_groq", "tool_groq_qwen",
-                     "tool_gemini", "tool_openrouter"]
-CLASSIFY_LLMS = ["classify_groq", "classify_groq_qwen",
-                 "classify_gemini", "classify_openrouter"]
-PLAIN_LLMS = ["plain_groq", "plain_groq_qwen",
-              "plain_gemini", "plain_openrouter"]
+TOOL_CALLING_LLMS = _with_paid(
+    "tool", ["tool_groq", "tool_groq_qwen", "tool_gemini", "tool_openrouter"])
+CLASSIFY_LLMS = _with_paid(
+    "classify", ["classify_groq", "classify_groq_qwen", "classify_gemini", "classify_openrouter"])
+PLAIN_LLMS = _with_paid(
+    "plain", ["plain_groq", "plain_groq_qwen", "plain_gemini", "plain_openrouter"])
 VISION_LLMS = ["vision_groq", "vision_openrouter"]
 LOCATE_MODELS = ["moondream"]
 STT_MODELS = ["stt_gemini", "stt_cartesia"]
@@ -155,5 +186,12 @@ def make_llm(name, api_key):
         return ChatOpenRouter(api_key=api_key, **kwargs)
     if provider == "jina":
         return JinaEmbeddings(api_key=api_key, **kwargs)
+    # paid engines: lazy imports, free-only users don't need these packages
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(api_key=api_key, **kwargs)
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(api_key=api_key, **kwargs)
     raise ValueError(
         f"'{name}' ({provider}) is not a LangChain chat model; use gateway.run()")
