@@ -254,7 +254,10 @@ def chat(state: State) -> dict:
     for _ in range(3):  # max tool rounds for chat
         check_cancel()
         try:
-            ai = get_gateway().invoke(TOOL_CALLING_LLMS, local, tools=chat_tools)
+            # Chat needs natural responses, but its read-only info tools remain available.
+            # The plain model configs use a higher temperature than the tool-agent configs,
+            # so this handles conversation and tool calls in the same request path.
+            ai = get_gateway().invoke(PLAIN_LLMS, local, tools=chat_tools)
         except AllModelsFailed:
             return {"last_result": "All my models are down right now, try again in a bit.",
                     "last_ok": False}
