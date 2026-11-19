@@ -42,6 +42,16 @@ import threading
 import uuid
 from datetime import datetime, timedelta
 
+import sys  # noqa
+import os  # noqa
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 import requests
 from qdrant_client import QdrantClient, models
 from langsmith import traceable
@@ -683,3 +693,11 @@ def show_all_context(include_history: bool = False):
             print(
                 f"Replaced at: {d.get('superseded_at')} (by {d.get('superseded_by')})")
     print("\n==================================")
+
+
+print("\n⭐ IMPORTANT (4+):")
+for m in get_important_memories(min_importance=4, limit=50):
+    print(f"[{m['importance']}/5] {m['text']}")
+
+show_all_context(include_history=False)   # all active memories
+# show_all_context(include_history=True)  # also shows superseded (old) ones
