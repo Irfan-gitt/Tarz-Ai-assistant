@@ -45,6 +45,8 @@ class Api:
         self._history: list = []
         self._lock = threading.Lock()
         self._request_running = threading.Event()
+        self._voice_activity_lock = threading.Lock()
+        self._voice_activity = "idle"
         self._events_lock = threading.Lock()
         self._events = []
         self._stop_hotkey = None
@@ -60,9 +62,21 @@ class Api:
                               **json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))}
         except (OSError, ValueError):
             self._settings = dict(DEFAULT_SETTINGS)
+        self._voice_activity = "listening" if self._settings.get(
+            "background_listening") else "idle"
 
     def get_voice_settings(self) -> dict:
         return dict(self._settings)
+
+    def get_voice_activity(self) -> dict:
+        with self._voice_activity_lock:
+            return {"state": self._voice_activity}
+
+    def _set_voice_activity(self, state: str):
+        with self._voice_activity_lock:
+            self._voice_activity = state
+        if self._settings.get("background_listening"):
+            get_orb().set_state(state)
 
     def get_audio_devices(self) -> dict:
         inputs, outputs = [], []
@@ -83,14 +97,18 @@ class Api:
         dialog_id = uuid.uuid4().hex
         with self._dialog_condition:
             self._dialog_waiting[dialog_id] = kind
-        title = "TARZ needs approval" if kind == "confirm" else "TARZ needs your reply"
-        try:
-            get_orb().show_notification(
-                dialog_id, title, message, kind,
-                lambda response: self._resolve_dialog(dialog_id, response),
-            )
-        except Exception:
-            self._resolve_dialog(dialog_id, False if kind == "confirm" else "")
+        if kind == "answer":
+            # Clarifying questions belong in the chat, not a system-wide popup.
+            with self._events_lock:
+                self._events.append({"question": {"id": dialog_id, "text": message}})
+        else:
+            try:
+                get_orb().show_notification(
+                    dialog_id, "TARZ needs approval", message, kind,
+                    lambda response: self._resolve_dialog(dialog_id, response),
+                )
+            except Exception:
+                self._resolve_dialog(dialog_id, False)
         with self._dialog_condition:
             while dialog_id not in self._dialog_answers:
                 self._dialog_condition.wait()
@@ -104,6 +122,17 @@ class Api:
             self._dialog_answers[dialog_id] = response
             self._dialog_condition.notify_all()
 
+    def answer_question(self, question_id: str, answer: str) -> dict:
+        answer = (answer or "").strip()
+        if not answer:
+            return {"ok": False, "error": "Type a reply first."}
+        with self._dialog_condition:
+            if self._dialog_waiting.get(question_id) != "answer":
+                return {"ok": False, "error": "That question is no longer waiting for a reply."}
+            self._dialog_answers[question_id] = answer
+            self._dialog_condition.notify_all()
+        return {"ok": True}
+
     def _confirm_from_ui(self, question: str) -> bool:
         return bool(self._request_dialog("confirm", question))
 
@@ -113,17 +142,22 @@ class Api:
     def _sync_listener(self):
         enabled = bool(self._settings.get("background_listening"))
         if enabled and (self._listener_thread is None or not self._listener_thread.is_alive()):
+            self._set_voice_activity("listening")
             self._listener_stop.clear()
             self._listener_thread = threading.Thread(target=self._listen_in_background,
                                                      name="tarz-wake-listener", daemon=True)
             self._listener_thread.start()
         elif not enabled:
             self._listener_stop.set()
+            self._set_voice_activity("idle")
+            if self._listener_thread is not None:
+                get_orb().hide()
 
     def _stop_listener(self):
         self._listener_stop.set()
         with self._dialog_condition:
-            ids = list(self._dialog_waiting)
+            ids = [dialog_id for dialog_id, kind in self._dialog_waiting.items()
+                   if kind == "confirm"]
             for dialog_id, kind in self._dialog_waiting.items():
                 self._dialog_answers[dialog_id] = False if kind == "confirm" else ""
             self._dialog_condition.notify_all()
@@ -147,7 +181,8 @@ class Api:
             return {"ok": False, "message": "TARZ is not working on a request."}
         cancel_event.set()
         with self._dialog_condition:
-            dialog_ids = list(self._dialog_waiting)
+            dialog_ids = [dialog_id for dialog_id, kind in self._dialog_waiting.items()
+                          if kind == "confirm"]
             for dialog_id, kind in self._dialog_waiting.items():
                 self._dialog_answers[dialog_id] = False if kind == "confirm" else ""
             self._dialog_condition.notify_all()
@@ -160,6 +195,7 @@ class Api:
     def _listen_in_background(self):
         while not self._listener_stop.is_set():
             try:
+                self._set_voice_activity("listening")
                 heard_wake_word = wait_for_wake_word(
                     self._listener_stop, self._settings.get("input_device"))
                 if not heard_wake_word or self._listener_stop.is_set():
@@ -167,12 +203,16 @@ class Api:
                 transcript = live_listen(timeout=8, provider=self._settings["stt_provider"],
                                          input_device=self._settings["input_device"]).strip()
                 if not transcript or self._listener_stop.is_set():
+                    get_orb().hide()
                     continue
+                with self._events_lock:
+                    self._events.append({"user": transcript})
                 result = self.send_message(transcript)
                 with self._events_lock:
-                    self._events.append({"user": transcript,
-                                         "reply": result.get("reply") or result.get("error", "TARZ could not answer.")})
+                    self._events.append({"assistant": result.get("reply") or result.get("error", "TARZ could not answer.")})
+                get_orb().hide()
             except Exception as exc:
+                get_orb().hide()
                 with self._events_lock:
                     self._events.append({"error": f"Background listening stopped: {type(exc).__name__}: {exc}"})
                 self._listener_stop.set()
@@ -238,12 +278,19 @@ class Api:
         with self._lock:
             cancel_event.clear()
             self._request_running.set()
+            background_voice = bool(self._settings.get("background_listening"))
             try:
+                if background_voice:
+                    self._set_voice_activity("thinking")
                 result = self._graph.invoke(
                     {"user_text": text, "messages": self._history}, {"recursion_limit": 40})
                 self._history = result["messages"][-v3.WINDOW:]
                 reply = result.get("spoken") or result.get("final") or "Done."
+                if background_voice:
+                    get_orb().update_caption(reply)
                 if self._settings["tts_enabled"] and self._settings["tts_provider"] != "off":
+                    if background_voice:
+                        self._set_voice_activity("speaking")
                     speak(reply, provider=self._settings["tts_provider"],
                           output_device=self._settings["output_device"],
                           speed=self._settings["speed"], volume=self._settings["volume"])
@@ -254,6 +301,8 @@ class Api:
                 return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
             finally:
                 self._request_running.clear()
+                if background_voice:
+                    self._set_voice_activity("listening")
 
     def new_chat(self) -> bool:
         with self._lock:
