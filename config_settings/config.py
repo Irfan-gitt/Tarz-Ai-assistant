@@ -134,7 +134,7 @@ for _p in ("tool", "classify", "plain"):
 
 
 def _with_paid(prefix, free):
-    """Paid models go first, only if the user added that key. Free ones stay as fallback."""
+    """Include configured paid models at the head of the route's rotation."""
     paid = []
     if ANTHROPIC_ALL_KEYS:
         paid.append(f"{prefix}_anthropic")
@@ -143,7 +143,7 @@ def _with_paid(prefix, free):
     return paid + free
 
 
-# --- Priority lists: first = preferred, the rest are fallbacks ---
+# --- Per-route model pools: start positions rotate; unavailable models are skipped ---
 TOOL_CALLING_LLMS = _with_paid(
     "tool", ["tool_groq", "tool_groq_qwen", "tool_gemini", "tool_openrouter"])
 CLASSIFY_LLMS = _with_paid(
