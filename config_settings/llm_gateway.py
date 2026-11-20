@@ -159,6 +159,8 @@ class LLMGateway:
         self._limits = limits or {}
         self._lock = threading.Lock()
         self._blocked: dict[tuple, float] = {}
+        # Each distinct priority list gets its own round-robin cursor.
+        self._model_cursors: dict[tuple[str, ...], int] = {}
         # (provider, key, model_id) -> deque([t, tokens])
         self._usage: dict[tuple, deque] = {}
         self._last_used: dict[tuple, float] = {}    # (provider, key) -> time
@@ -180,11 +182,16 @@ class LLMGateway:
             q.popleft()
         return q
 
-    def _key_wait(self, provider: str, key: str, model_id: str, est: int, now: float) -> float:
-        """Seconds until this key can take one more request for this model (0 = usable now)."""
+    def _cooldown_wait(self, provider: str, key: str, model_id: str, now: float) -> float:
+        """Seconds left on explicit auth/rate cooldowns for this provider key."""
         wait = max(self._blocked.get(("auth", provider, key), 0.0),
                    self._blocked.get(("rate", provider, key, model_id), 0.0),
                    self._blocked.get(("rate", provider, "*", model_id), 0.0)) - now
+        return max(0.0, wait)
+
+    def _key_wait(self, provider: str, key: str, model_id: str, est: int, now: float) -> float:
+        """Seconds until usable, including provider cooldowns and local estimates."""
+        wait = self._cooldown_wait(provider, key, model_id, now)
         lim = self._limits.get(model_id)
         if lim:
             q = self._window(self._bucket(provider, key, model_id), now)
@@ -208,19 +215,40 @@ class LLMGateway:
         rows = []
         for index, key in enumerate(keys, start=1):
             wait = self._key_wait(provider, key, model_id, est, now)
+            cooldown_wait = self._cooldown_wait(provider, key, model_id, now)
             used = sum(tok for _, tok in self._window(
                 self._bucket(provider, key, model_id), now))
-            rows.append((wait, used, self._last_used.get(
+            # A short fallback may bypass our estimate, never a provider cooldown.
+            eligible_wait = wait if respect else cooldown_wait
+            rows.append((eligible_wait, used, self._last_used.get(
                 (provider, key), 0.0), index, key))
         if respect:
             ready = [r for r in rows if r[0] <= 0]
             busy = [r[0] for r in rows if r[0] > 0]
             soonest = min(busy) if busy else None
         else:
-            ready, soonest = rows, None
+            ready = [r for r in rows if r[0] <= 0]
+            busy = [r[0] for r in rows if r[0] > 0]
+            soonest = min(busy) if busy else None
         # least tokens used, then least recently used
         ready.sort(key=lambda r: (r[1], r[2]))
         return [(r[3], r[4]) for r in ready], soonest
+
+    def _rotated_models(self, models: Sequence[str]) -> tuple[str, ...]:
+        """Start each route at its next preferred model, leaving fallback order intact."""
+        names = tuple(models)
+        if len(names) < 2:
+            return names
+        with self._lock:
+            start = self._model_cursors.get(names, 0) % len(names)
+            self._model_cursors[names] = (start + 1) % len(names)
+        return names[start:] + names[:start]
+
+    def _advance_after_model(self, models: tuple[str, ...], name: str) -> None:
+        if len(models) < 2:
+            return
+        with self._lock:
+            self._model_cursors[models] = (models.index(name) + 1) % len(models)
 
     def _reserve(self, provider, key, model_id, est, now) -> list:
         entry = [now, est]
@@ -257,7 +285,8 @@ class LLMGateway:
     def _pass(self, models, call, est, respect, failures):
         """-> (done, result, attempted, soonest_wait)"""
         attempted, soonest = False, None
-        for name in models:
+        route_models = tuple(models)
+        for name in self._rotated_models(route_models):
             settings = self._configs.get(name)
             if settings is None:
                 raise LLMError(f"Unknown model config '{name}'")
@@ -272,7 +301,9 @@ class LLMGateway:
             now = self._clock()
             with self._lock:
                 model_wait = self._blocked.get(("model", name), 0.0) - now
-            if respect and model_wait > 0:
+            if model_wait > 0:
+                failures.append(
+                    f"{name}: model cooldown active for {model_wait:.1f}s")
                 soonest = model_wait if soonest is None else min(
                     soonest, model_wait)
                 continue
@@ -283,6 +314,9 @@ class LLMGateway:
             if key_soonest is not None:
                 soonest = key_soonest if soonest is None else min(
                     soonest, key_soonest)
+                if not order:
+                    failures.append(
+                        f"{name}: all keys are rate-limited or cooling down")
 
             for index, key in order:
                 if self._cancel_check:
@@ -318,6 +352,7 @@ class LLMGateway:
                 usage = getattr(result, "usage_metadata", None)
                 if isinstance(usage, dict) and usage.get("total_tokens"):
                     entry[1] = int(usage["total_tokens"])
+                self._advance_after_model(route_models, name)
                 log.info("model=%s key=#%d tokens=%s latency=%.2fs",
                          name, index, entry[1], self._clock() - started)
                 return True, result, True, None
@@ -346,12 +381,14 @@ class LLMGateway:
                 waited += max(soonest, 0.05)
                 continue
             break
-        # everything was cooling down and no key frees up soon: try anyway, ignoring blocks
+        # Stay responsive when only local estimates say to wait, but never retry
+        # a provider-reported rate/auth cooldown or model-outage cooldown early.
         done, result, _a, _s = self._pass(
             models, call, est_tokens, False, failures)
         if done:
             return result
-        raise AllModelsFailed(failures)
+        raise AllModelsFailed(failures or [
+            "All configured models are cooling down; retry after their cooldowns expire."])
 
     # ---- LangChain helpers ----
     def client(self, name: str, key: str, tools: Optional[Sequence] = None, schema: Optional[type] = None):
