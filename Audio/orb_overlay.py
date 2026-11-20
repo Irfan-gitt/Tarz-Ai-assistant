@@ -27,16 +27,55 @@ import queue
 import threading
 
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QLabel, QPushButton, QLineEdit, QVBoxLayout,
+    QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QFrame,
 )
-from PyQt6.QtGui import QPainter, QRadialGradient, QConicalGradient, QColor, QPen, QFont, QFontMetrics, QCursor
+from PyQt6.QtGui import QPainter, QPainterPath, QRadialGradient, QConicalGradient, QColor, QPen, QFont, QFontMetrics, QCursor
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
 
 try:
     import winsound
 except ImportError:  # pragma: no cover - non-Windows fallback
     winsound = None
+
+
+class _PopupOrb(QWidget):
+    """Small animated orb used by the system-wide approval card."""
+
+    def __init__(self, color: str):
+        super().__init__()
+        self._color = QColor(color)
+        self._phase = 0.0
+        self.setFixedSize(48, 48)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(32)
+
+    def _tick(self):
+        self._phase += 0.08
+        self.update()
+
+    def paintEvent(self, _):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        center = QPointF(self.width() / 2, self.height() / 2)
+        radius = 15 * (1 + 0.04 * math.sin(self._phase))
+        glow = QRadialGradient(center, 23)
+        halo = QColor(self._color)
+        halo.setAlpha(60)
+        glow.setColorAt(0, halo)
+        glow.setColorAt(1, QColor(halo.red(), halo.green(), halo.blue(), 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(glow)
+        painter.drawEllipse(QRectF(1, 1, 46, 46))
+        sphere = QRadialGradient(QPointF(center.x() - radius * .3,
+                                         center.y() - radius * .35), radius * 1.5)
+        sphere.setColorAt(0, QColor("#ffffff"))
+        sphere.setColorAt(.35, self._color.lighter(140))
+        sphere.setColorAt(1, self._color.darker(150))
+        painter.setBrush(sphere)
+        painter.drawEllipse(QRectF(center.x() - radius, center.y() - radius,
+                                   radius * 2, radius * 2))
 
 
 class _ApprovalPopup(QWidget):
@@ -53,20 +92,19 @@ class _ApprovalPopup(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
-        self.setFixedWidth(410)
+        self.setFixedWidth(440)
         self.setStyleSheet("""
-            QWidget#approvalPopup { background:#15171b; color:#f5f6f8; font:14px 'Segoe UI'; border:1px solid #343840; border-radius:16px; }
+            QWidget#approvalPopup { background:#191919; color:#ffffff; font:14px 'Segoe UI'; border:1px solid #343840; border-radius:18px; }
             QWidget { color:#f5f6f8; font:14px 'Segoe UI'; }
-            QLabel#eyebrow { color:#ffae72; font-size:11px; font-weight:700; letter-spacing:1px; }
-            QLabel#title { font-size:17px; font-weight:600; }
-            QLabel#message { color:#c5c8ce; }
-            QFrame#details { background:#1d2025; border:1px solid #30343b; border-radius:11px; }
+            QLabel#eyebrow { color:#9a9ea5; font:10px 'Consolas'; letter-spacing:1px; }
+            QLabel#title { font-size:16px; font-weight:600; }
+            QLabel#message { color:#d4d5d8; }
+            QFrame#details { background:#1a1c20; border:1px solid #212327; border-radius:11px; }
             QLabel#key { color:#949aa4; font-size:12px; }
             QLabel#value { color:#f1f2f4; font-size:13px; }
-            QLineEdit { background:#0d0e10; border:1px solid #45474d; border-radius:8px; padding:10px; color:white; }
-            QPushButton { border:1px solid #41454d; border-radius:9px; padding:7px 14px; background:#202227; color:#f3f4f6; font-weight:600; }
-            QPushButton#primary { background:#ff8a3d; color:#171717; border-color:#ff8a3d; }
-            QPushButton#primary:hover { background:#ffa061; border-color:#ffa061; }
+            QPushButton { border:1px solid #41454d; border-radius:16px; padding:7px 17px; background:transparent; color:#f3f4f6; font-weight:600; }
+            QPushButton#primary { background:#ffffff; color:#0a0a0a; border-color:#ffffff; }
+            QPushButton#primary:hover { background:#e6e6e6; border-color:#e6e6e6; }
             QPushButton#deny:hover { background:#30333a; }
         """)
 
@@ -74,14 +112,21 @@ class _ApprovalPopup(QWidget):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(7)
 
-        eyebrow = QLabel("TARZ  /  ACTION APPROVAL" if kind == "confirm" else "TARZ  /  NEEDS YOUR INPUT")
+        eyebrow = QLabel("TARZ  /  ACTION APPROVAL")
         eyebrow.setObjectName("eyebrow")
         heading = QLabel(title)
         heading.setObjectName("title")
-        layout.addWidget(eyebrow)
-        layout.addWidget(heading)
+        heading_block = QVBoxLayout()
+        heading_block.setSpacing(3)
+        heading_block.addWidget(eyebrow)
+        heading_block.addWidget(heading)
+        header = QHBoxLayout()
+        header.setSpacing(11)
+        header.addWidget(_PopupOrb("#ffb347" if kind == "confirm" else "#ff7a17"))
+        header.addLayout(heading_block, 1)
+        layout.addLayout(header)
 
-        action_name, args = self._parse_action(message) if kind == "confirm" else (None, None)
+        action_name, args = self._parse_action(message)
         if action_name and args is not None:
             heading.setText("Review this action")
             action_title = QLabel(self._humanize_action(action_name))
@@ -115,21 +160,14 @@ class _ApprovalPopup(QWidget):
         body.setMaximumHeight(90)
         layout.addWidget(body)
 
-        self._answer = None
-        if kind == "answer":
-            self._answer = QLineEdit()
-            self._answer.setPlaceholderText("Type your answer…")
-            layout.addWidget(self._answer)
-            self._answer.returnPressed.connect(self._submit_answer)
-
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = QPushButton("Cancel" if kind == "answer" else "Deny")
+        cancel = QPushButton("Deny")
         cancel.setObjectName("deny")
-        primary = QPushButton("Send" if kind == "answer" else "Allow")
+        primary = QPushButton("Allow")
         primary.setObjectName("primary")
         cancel.clicked.connect(self._cancel)
-        primary.clicked.connect(self._submit_answer if kind == "answer" else self._approve)
+        primary.clicked.connect(self._approve)
         buttons.addWidget(cancel)
         buttons.addWidget(primary)
         layout.addLayout(buttons)
@@ -183,8 +221,6 @@ class _ApprovalPopup(QWidget):
                 QApplication.beep()
         else:
             QApplication.beep()
-        if self._answer is not None:
-            self._answer.setFocus()
 
     def _finish(self, result):
         if self._finished:
@@ -196,17 +232,23 @@ class _ApprovalPopup(QWidget):
     def _approve(self):
         self._finish(True)
 
-    def _submit_answer(self):
-        self._finish(self._answer.text() if self._answer else "")
-
     def _cancel(self):
-        self._finish(False if self._kind == "confirm" else "")
+        self._finish(False)
 
     def closeEvent(self, event):
         if not self._finished:
             self._finished = True
-            self._on_result(False if self._kind == "confirm" else "")
+            self._on_result(False)
         super().closeEvent(event)
+
+
+ORB_STATES = {
+    "idle": ("#9a9ea5", "#3a3d42"),
+    "listening": ("#ff7a17", "#b8420a"),
+    "thinking": ("#7c3aed", "#2e1065"),
+    "speaking": ("#f5f5f5", "#ff7a17"),
+    "confirm": ("#ffb347", "#b8420a"),
+}
 
 
 class _OrbWidget(QWidget):
@@ -216,6 +258,11 @@ class _OrbWidget(QWidget):
         self._level = 0.0
         self._target_level = 0.0
         self._phase = 0.0
+        self._state = "idle"
+        self._color = QColor(ORB_STATES["idle"][0])
+        self._deep_color = QColor(ORB_STATES["idle"][1])
+        self._target_color = QColor(self._color)
+        self._target_deep_color = QColor(self._deep_color)
 
         self._opacity = 0.0
         self._target_opacity = 0.0
@@ -226,6 +273,9 @@ class _OrbWidget(QWidget):
         self._caption_target_opacity = 0.0
         self._caption_idle_frames = 0
         self._caption_hold_frames = 240
+        self._top_margin = top_margin
+        self._caption_width = 345
+        self._capsule_height = 78
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -236,18 +286,16 @@ class _OrbWidget(QWidget):
         self.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
-        self._orb_area = int(size * 2.2)
-        self._caption_area_h = 50
-        self._total_w = max(self._orb_area, 460)
-        self._total_h = self._orb_area + self._caption_area_h
+        self._total_w = 620
+        self._total_h = self._capsule_height + 34
 
         screen = QApplication.primaryScreen().geometry()
         x = (screen.width() - self._total_w) // 2
         y = top_margin
         self.setGeometry(x, y, self._total_w, self._total_h)
 
-        self._orb_cx = self._total_w / 2
-        self._orb_cy = self._orb_area / 2
+        self._orb_cx = 56
+        self._orb_cy = 56
 
         self.hide()
 
@@ -261,6 +309,9 @@ class _OrbWidget(QWidget):
         self._level += (self._target_level - self._level) * 0.22
         self._phase += 0.012 + 0.02 * self._level
         self._opacity += (self._target_opacity - self._opacity) * 0.18
+        self._color = self._blend(self._color, self._target_color, 0.14)
+        self._deep_color = self._blend(
+            self._deep_color, self._target_deep_color, 0.14)
 
         if self._caption_text:
             self._caption_idle_frames += 1
@@ -282,11 +333,41 @@ class _OrbWidget(QWidget):
     def set_target_level(self, level: float):
         self._target_level = max(0.0, min(1.0, level))
 
+    @staticmethod
+    def _blend(source: QColor, target: QColor, amount: float) -> QColor:
+        return QColor(
+            round(source.red() + (target.red() - source.red()) * amount),
+            round(source.green() + (target.green() - source.green()) * amount),
+            round(source.blue() + (target.blue() - source.blue()) * amount),
+        )
+
+    def set_state(self, state: str):
+        if state not in ORB_STATES:
+            return
+        self._state = state
+        main, deep = ORB_STATES[state]
+        self._target_color = QColor(main)
+        self._target_deep_color = QColor(deep)
+
     def set_caption(self, text: str):
         self._caption_text = text.strip()
         self._caption_idle_frames = 0
         if self._caption_text:
             self._caption_target_opacity = 1.0
+        font = QFont("Segoe UI Semibold", 11)
+        metrics = QFontMetrics(font)
+        bounds = metrics.boundingRect(
+            0, 0, self._caption_width, 10000,
+            Qt.TextFlag.TextWordWrap, self._caption_text)
+        desired = max(78, bounds.height() + 54)
+        screen = QApplication.primaryScreen().availableGeometry()
+        max_height = max(78, screen.height() - self._top_margin - 34)
+        self._capsule_height = min(desired, max_height)
+        self._total_h = self._capsule_height + 34
+        self.setGeometry((screen.width() - self._total_w) // 2,
+                         screen.top() + self._top_margin,
+                         self._total_w, self._total_h)
+        self.update()
 
     def animate_show(self):
         self._pending_hide = False
@@ -296,137 +377,134 @@ class _OrbWidget(QWidget):
 
     def animate_hide(self):
         self._target_opacity = 0.0
+        self._caption_text = ""
+        self._caption_target_opacity = 0.0
         self._pending_hide = True
 
     # ─── Drawing ───
 
     def paintEvent(self, event):
-        if self._opacity <= 0.01 and self._caption_opacity <= 0.01:
+        if self._opacity <= 0.01:
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        cx, cy = self._orb_cx, self._orb_cy
         op = self._opacity
+        capsule = QRectF(12, 17, self._total_w - 24, self._capsule_height)
 
-        if op > 0.01:
-            min_r = self._size * 0.34
-            max_r = self._size * 0.44
-            radius = min_r + (max_r - min_r) * self._level
-            rect = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
-
-            # Soft outer glow — a few wide, faint rings.
-            glow_layers = 5
-            for i in range(glow_layers, 0, -1):
-                extra = i * (self._size * (0.045 + 0.02 * self._level))
-                alpha = int(30 * (1 - (i - 1) / glow_layers)
-                            * (0.6 + 0.5 * self._level) * op)
-                pen = QPen(QColor(120, 140, 255, alpha))
-                pen.setWidthF(self._size * 0.10 + extra)
-                painter.setPen(pen)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawEllipse(rect)
-
-            # Solid body: smooth lit-sphere gradient, light source upper-left.
-            light_cx = cx - radius * 0.32
-            light_cy = cy - radius * 0.34
-            base = QRadialGradient(QPointF(light_cx, light_cy), radius * 1.5)
-            for pos, hexcolor in [
-                (0.00, "#e8f0ff"), (0.30, "#8fb4ff"),
-                (0.62, "#4a68e0"), (1.00, "#1a2568"),
-            ]:
-                c = QColor(hexcolor)
-                c.setAlpha(int(250 * op))
-                base.setColorAt(pos, c)
+        # The voice session is a single translucent capsule around the orb,
+        # live caption, activity waveform, and the real stop shortcut.
+        for i in range(4, 0, -1):
+            grow = i * 3
+            glow = QColor(self._color)
+            glow.setAlpha(int(13 * (1 - (i - 1) / 4) * op))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(base)
-            painter.drawEllipse(rect)
+            painter.setBrush(glow)
+            painter.drawRoundedRect(capsule.adjusted(-grow, -grow, grow, grow),
+                                    capsule.height() / 2 + grow,
+                                    capsule.height() / 2 + grow)
 
-            # Two large, soft, slowly drifting color blobs for gentle
-            # internal motion — blended, not lines or streaks.
-            painter.save()
-            from PyQt6.QtGui import QPainterPath
-            clip = QPainterPath()
-            clip.addEllipse(rect)
-            painter.setClipPath(clip)
+        panel = QColor("#191919")
+        panel.setAlpha(int(246 * op))
+        painter.setBrush(panel)
+        border = QColor("#45474d")
+        border.setAlpha(int(220 * op))
+        painter.setPen(QPen(border, 1))
+        painter.drawRoundedRect(capsule, capsule.height() / 2,
+                                capsule.height() / 2)
 
-            for hexcolor, speed, phase_off, orbit, blob_r_frac, base_alpha in [
-                ("#c9a8ff", 1.0, 0.0, 0.30, 0.85, 90),
-                ("#ffffff", 0.6, 2.4, 0.20, 0.55, 70),
-                ("#ff9955", 0.45, 4.1, 0.28, 0.70, 85),
-            ]:
-                ang = self._phase * speed + phase_off
-                bx = cx + math.cos(ang) * radius * orbit
-                by = cy + math.sin(ang * 0.7) * radius * orbit
-                br = radius * blob_r_frac
-                grad = QRadialGradient(QPointF(bx, by), br)
-                c1 = QColor(hexcolor)
-                c1.setAlpha(int((base_alpha + 40 * self._level) * op))
-                c2 = QColor(hexcolor)
-                c2.setAlpha(0)
-                grad.setColorAt(0.0, c1)
-                grad.setColorAt(1.0, c2)
-                painter.setBrush(grad)
-                painter.drawEllipse(QRectF(bx - br, by - br, br * 2, br * 2))
+        # Animated morphing orb at the leading edge.
+        cx, cy = self._orb_cx, self._orb_cy
+        radius = self._size * (0.34 + 0.07 * self._level)
+        points = []
+        for i in range(48):
+            angle = i / 48 * math.tau
+            wobble = (0.045 * math.sin(3 * angle + self._phase)
+                      + 0.03 * math.sin(5 * angle - 1.3 * self._phase)
+                      + self._level * 0.14 * math.sin(2 * angle + 2 * self._phase))
+            r = radius * (1 + wobble)
+            points.append(QPointF(cx + r * math.cos(angle),
+                                  cy + r * math.sin(angle)))
+        body = QPainterPath(points[0])
+        for i in range(len(points)):
+            p0, p1 = points[(i - 1) % len(points)], points[i]
+            p2, p3 = points[(i + 1) % len(points)], points[(i + 2) % len(points)]
+            c1 = QPointF(p1.x() + (p2.x() - p0.x()) / 6,
+                         p1.y() + (p2.y() - p0.y()) / 6)
+            c2 = QPointF(p2.x() - (p3.x() - p1.x()) / 6,
+                         p2.y() - (p3.y() - p1.y()) / 6)
+            body.cubicTo(c1, c2, p2)
+        body.closeSubpath()
 
-            # Small glossy highlight
-            hl_r = radius * 0.22
-            hl_cx = cx - radius * 0.35
-            hl_cy = cy - radius * 0.40
-            hl_grad = QRadialGradient(QPointF(hl_cx, hl_cy), hl_r)
-            hl_grad.setColorAt(0.0, QColor(255, 255, 255, int(200 * op)))
-            hl_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.setBrush(hl_grad)
-            painter.drawEllipse(
-                QRectF(hl_cx - hl_r, hl_cy - hl_r, hl_r * 2, hl_r * 2))
+        glow = QRadialGradient(QPointF(cx, cy), radius * 2.2)
+        halo = QColor(self._color)
+        halo.setAlpha(int(90 * op))
+        glow.setColorAt(0, halo)
+        glow.setColorAt(1, QColor(halo.red(), halo.green(), halo.blue(), 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(glow)
+        painter.drawEllipse(QPointF(cx, cy), radius * 1.8, radius * 1.8)
 
-            painter.restore()
+        light = QRadialGradient(QPointF(cx - radius * .32, cy - radius * .4),
+                                radius * 1.6)
+        for pos, color in ((0, QColor("#ffffff")),
+                           (.35, self._color.lighter(140)),
+                           (1, self._deep_color)):
+            shade = QColor(color)
+            shade.setAlpha(int(250 * op))
+            light.setColorAt(pos, shade)
+        painter.setBrush(light)
+        painter.drawPath(body)
 
-        # ── Caption: frosted-glass pill ──
-        if self._caption_opacity > 0.01 and self._caption_text:
-            cap_op = self._caption_opacity
-            painter.setOpacity(cap_op)
+        # State label and live voice text.
+        labels = {
+            "idle": "TARZ  /  READY",
+            "listening": "01  /  LISTENING",
+            "thinking": "02  /  THINKING",
+            "speaking": "03  /  SPEAKING",
+            "confirm": "04  /  NEEDS APPROVAL",
+        }
+        painter.setPen(QColor(154, 158, 165, int(245 * op)))
+        painter.setFont(QFont("Consolas", 8))
+        painter.drawText(QPointF(96, 49), labels.get(self._state, "TARZ"))
 
-            font = QFont("Segoe UI Semibold", 12)
-            font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 104)
-            painter.setFont(font)
-            metrics = QFontMetrics(font)
+        caption = self._caption_text or {
+            "idle": "Ready when you are",
+            "listening": "Listening for your request...",
+            "thinking": "Planning your request...",
+            "speaking": "TARZ is speaking...",
+            "confirm": "Waiting for your approval...",
+        }.get(self._state, "")
+        painter.setPen(QColor(255, 255, 255, int(245 * op)))
+        painter.setFont(QFont("Segoe UI Semibold", 11))
+        caption_rect = QRectF(96, 55, self._caption_width,
+                              max(18, self._capsule_height - 45))
+        painter.drawText(caption_rect,
+                         Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft
+                         | Qt.AlignmentFlag.AlignTop, caption)
 
-            max_text_w = self._total_w - 80
-            elided = metrics.elidedText(
-                self._caption_text, Qt.TextElideMode.ElideRight, max_text_w)
-            text_w = metrics.horizontalAdvance(elided)
-
-            pill_w = text_w + 44
-            pill_h = 34
-            pill_x = cx - pill_w / 2
-            pill_y = self._orb_area + (self._caption_area_h - pill_h) / 2
-            pill_rect = QRectF(pill_x, pill_y, pill_w, pill_h)
-
-            for i in range(4, 0, -1):
-                grow = i * 3
-                alpha = int(18 * (1 - (i - 1) / 4) * cap_op)
-                glow_rect = pill_rect.adjusted(-grow, -grow, grow, grow)
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(20, 25, 60, alpha))
-                painter.drawRoundedRect(
-                    glow_rect, pill_h / 2 + grow, pill_h / 2 + grow)
-
-            painter.setBrush(QColor(25, 28, 48, int(150 * cap_op)))
+        # Audio bars move with microphone level and keep a soft idle pulse.
+        if self._state in ("listening", "speaking"):
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(pill_rect, pill_h / 2, pill_h / 2)
+            painter.setBrush(QColor(255, 255, 255, int(235 * op)))
+            profile = (.42, .72, 1, .78, .95, .62, .4)
+            for i, scale in enumerate(profile):
+                wave = max(0.0, min(1.0,
+                    self._level * scale + .12 * math.sin(self._phase * 3 + i)))
+                height = 4 + 20 * wave
+                x = self._total_w - 166 + i * 6
+                painter.drawRoundedRect(QRectF(x, cy - height / 2, 3, height),
+                                        1.5, 1.5)
 
-            border_pen = QPen(QColor(255, 255, 255, int(50 * cap_op)))
-            border_pen.setWidthF(1.0)
-            painter.setPen(border_pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(pill_rect, pill_h / 2, pill_h / 2)
-
-            painter.setPen(QColor(255, 255, 255, int(235 * cap_op)))
-            painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, elided)
-
-            painter.setOpacity(1.0)
+        # Display the shortcut that actually cancels TARZ in this app.
+        key_rect = QRectF(self._total_w - 110, 44, 96, 24)
+        painter.setBrush(QColor(255, 255, 255, int(12 * op)))
+        painter.setPen(QPen(QColor(255, 255, 255, int(70 * op)), 1))
+        painter.drawRoundedRect(key_rect, 6, 6)
+        painter.setPen(QColor(205, 208, 214, int(245 * op)))
+        painter.setFont(QFont("Consolas", 7))
+        painter.drawText(key_rect, Qt.AlignmentFlag.AlignCenter,
+                         "Ctrl+Shift+Space")
 
 
 class OrbOverlay:
@@ -457,9 +535,14 @@ class OrbOverlay:
             while True:
                 action, payload = self._queue.get_nowait()
                 if action == "show":
+                    self.widget.set_caption("")
+                    self.widget.set_state("listening")
                     self.widget.animate_show()
                 elif action == "hide":
                     self.widget.animate_hide()
+                    self.widget.set_state("idle")
+                elif action == "state":
+                    self.widget.set_state(payload)
                 elif action == "level":
                     self.widget.set_target_level(payload)
                 elif action == "caption":
@@ -485,6 +568,9 @@ class OrbOverlay:
 
     def show(self):
         self._queue.put(("show", None))
+
+    def set_state(self, state: str):
+        self._queue.put(("state", state))
 
     def hide(self):
         self._queue.put(("hide", None))
