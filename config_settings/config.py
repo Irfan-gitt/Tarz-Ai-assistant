@@ -20,10 +20,12 @@ def _keys(*names):
 
 # --- API keys: every provider exposes ALL its keys, the gateway picks one ---
 GROQ_ALL_KEYS = _keys("GROQ_API_KEY_1", "GROQ_API_KEY_2", "GROQ_API_KEY_3")
-GROQ_VISION_ALL_KEYS = _keys("GROQ_VISION_KEY_1", "GROQ_VISION_KEY_2")
+GROQ_VISION_ALL_KEYS = _keys(
+    "GROQ_API_KEY_1", "GROQ_API_KEY_2", "GROQ_API_KEY_3")
 GEMINI_ALL_KEYS = _keys("GEMINI_KEY_1", "GEMINI_KEY_2",
                         "GEMINI_KEY_3", "GEMINI_KEY_4", "GEMINI_KEY_5")
-OPENROUTER_ALL_KEYS = _keys("OPENROUTER_API_KEY", "OPENROUTER_API_KEY2")
+OPENROUTER_ALL_KEYS = _keys("OPENROUTER_API_KEY1",
+                            "OPENROUTER_API_KEY2", "OPENROUTER_API_KEY3")
 MOONDREAM_ALL_KEYS = _keys("MOONDREAM_API_KEY")
 JEV_ALL_KEYS = OPENROUTER_ALL_KEYS
 CARTESIA_ALL_KEYS = _keys("CARTESIA_API_KEY")
@@ -83,7 +85,7 @@ _NO_RETRY = {"max_retries": 0}
 MODEL_CONFIGS = {
     "tool_groq": {"provider": "groq", "model": "openai/gpt-oss-120b", "temperature": 0, **_FAST},
     "tool_groq_qwen": {"provider": "groq", "model": "qwen/qwen3.8-27b", "temperature": 0, **_FAST},
-    "tool_gemini": {"provider": "google", "model": "gemini-2.5-flash", "temperature": 0.2, **_FAST},
+    "tool_gemini": {"provider": "google", "model": "gemini-2.5-flash", "temperature": 0, **_FAST},
     "tool_openrouter": {"provider": "openrouter", "model": "openrouter/free", "temperature": 0, **_NO_RETRY},
 
     "classify_groq": {"provider": "groq", "model": "openai/gpt-oss-120b", "temperature": 0, **_FAST},
