@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import threading
+import time
 import uuid
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -13,6 +14,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import sounddevice as sd
 import webview
 import keyboard
+from langchain_core.messages import AIMessage
 
 import v3
 from Audio.stt import live_listen
@@ -20,6 +22,8 @@ from Audio.tts import speak
 from Audio.orb_overlay import get_orb
 from Audio.wake_word import wait_for_wake_word
 from Tools.cancel_state import TaskCancelled, cancel_event
+from Memory_and_Retrieval.memory import get_due_followups, mark_followups_asked
+from Memory_and_Retrieval.rag import followup_question
 
 ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = ROOT / "config_settings" / "voice_settings.json"
@@ -44,11 +48,13 @@ class Api:
         v3.start_scheduler(v3.run_scheduled, confirm=self._confirm_from_ui)
         self._history: list = []
         self._lock = threading.Lock()
+        self._followup_lock = threading.Lock()
         self._request_running = threading.Event()
         self._voice_activity_lock = threading.Lock()
         self._voice_activity = "idle"
         self._events_lock = threading.Lock()
         self._events = []
+        self._next_followup_poll = 0.0
         self._stop_hotkey = None
         try:
             self._stop_hotkey = keyboard.add_hotkey(
@@ -89,6 +95,28 @@ class Api:
         return {"inputs": inputs, "outputs": outputs}
 
     def get_events(self) -> dict:
+        # This endpoint is polled by the chat page, so reminders can appear at
+        # their due time even when the user has not sent another message.
+        if (not self._request_running.is_set()
+                and self._followup_lock.acquire(blocking=False)):
+            try:
+                now = time.monotonic()
+                if not self._request_running.is_set() and now >= self._next_followup_poll:
+                    self._next_followup_poll = now + 15.0
+                    try:
+                        due = get_due_followups(limit=1)
+                        if due:
+                            item = due[0]
+                            question = followup_question(item)
+                            mark_followups_asked([item["id"]])
+                            self._history = [*self._history, AIMessage(content=question)][-v3.WINDOW:]
+                            with self._events_lock:
+                                self._events.append({"assistant": question})
+                    except Exception as exc:
+                        with self._events_lock:
+                            self._events.append({"error": f"Follow-up reminder failed: {type(exc).__name__}: {exc}"})
+            finally:
+                self._followup_lock.release()
         with self._events_lock:
             events, self._events = self._events, []
         return {"events": events}
@@ -174,6 +202,8 @@ class Api:
             except Exception:
                 pass
             self._stop_hotkey = None
+        if v3._last_save is not None:
+            v3._last_save.join(timeout=15)
 
     def stop_current_task(self) -> dict:
         """Request cancellation of the active chat or speech task."""
@@ -275,7 +305,7 @@ class Api:
         text = (text or "").strip()
         if not text:
             return {"ok": False, "error": "Type a message first."}
-        with self._lock:
+        with self._lock, self._followup_lock:
             cancel_event.clear()
             self._request_running.set()
             background_voice = bool(self._settings.get("background_listening"))
@@ -305,7 +335,7 @@ class Api:
                     self._set_voice_activity("listening")
 
     def new_chat(self) -> bool:
-        with self._lock:
+        with self._lock, self._followup_lock:
             self._history = []
         return True
 
