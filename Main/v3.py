@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 from langsmith import traceable
 
-from config_settings.guardrails import Guardrails, jev_ask, restore, HARD, PII_RULES, TAG, restore, jev_ask
+from config_settings.guardrails import Guardrails, jev_ask, restore, HARD, PII_RULES, TAG
 from config_settings.jev_gate import jev_gate
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
 from config_settings.config import (
@@ -48,12 +48,16 @@ from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_togg
 from Tools.scheduler import schedule_task, list_scheduled, cancel_scheduled, start as start_scheduler
 
 from Tools.Autonomous_layer.autonomous_agent import computer_agent, set_human_hooks
+from Tools.research_tool import research as research_tool
 
 from langchain_core.tools import BaseTool, StructuredTool
 
 from Actions.execute_action import click, type_text, press_key, read_screen, open_app, volume_control, wether_app, use_shortcut, set_alarm, news_update, set_timer, translate, clipboard, wait
-from Memory_and_Retrieval.memory import save_imp_context_background, mark_followups_asked
-from Memory_and_Retrieval.rag import build_memory_context
+from Memory_and_Retrieval.memory import (
+    save_imp_context_background, mark_followups_asked, get_due_followups,
+    has_pending_followups,
+)
+from Memory_and_Retrieval.rag import build_memory_context, followup_question
 from Tools.media_control import media_play_pause, media_next_track, media_previous_track
 from Audio.stt import live_listen
 from Audio.wake_word import wait_for_wake_word, play_done_chime, wake_hotkey_event
@@ -94,6 +98,10 @@ class State(TypedDict, total=False):
     blocked: bool
     memory_ctx: str
     followup_ids: list
+    followups: list
+    followup_shown_ids: list
+    handoff_data: str
+    handoffs: list
     plan: list
     step_idx: int
     route: str
@@ -121,7 +129,8 @@ SINGLE_TOOLS = [
     create_event, list_events, delete_event,
     wether_app, rt_data, translate, news_update,
     media_play_pause, media_previous_track, media_next_track,
-    schedule_task, list_scheduled, cancel_scheduled,   # NEW
+    schedule_task, list_scheduled, cancel_scheduled,
+    research_tool,
 ]
 
 DEDICATED_TOOLS = [
@@ -217,7 +226,8 @@ def guardrails_input(user_text: str):
 def guard_in(state: State) -> dict:
     result = guardrails_input(state["user_text"])
     reset = {"plan": [], "step_idx": 0, "results": [], "final": "", "task": "",
-             "last_ok": True, "last_result": "", "memory_ctx": "", "followup_ids": []}
+             "last_ok": True, "last_result": "", "memory_ctx": "", "followup_ids": [],
+             "followups": [], "followup_shown_ids": [], "handoff_data": "", "handoffs": []}
     if not result.allowed:
         return {**reset, "blocked": True, "final": result.reply, "spoken": result.reply}
     return {**reset, "blocked": False, "messages": [HumanMessage(content=result.text)]}
@@ -226,10 +236,14 @@ def guard_in(state: State) -> dict:
 # ---------------- RETRIEVAL ----------------
 def retrieval(state: State) -> dict:
     users = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    # first turn of the session
-    first_message = len(state["messages"]) == 1
-    ctx = build_memory_context(users, include_followups=first_message)
-    return {"memory_ctx": ctx.text, "followup_ids": ctx.followup_ids}
+    # Event reminders are checked on every turn; the UI also polls between turns.
+    # Keep their delivery deterministic in gaurdrails_output, rather than hoping
+    # the chat model notices and asks the question itself.
+    ctx = build_memory_context(users, include_followups=False)
+    followups = get_due_followups(limit=1)
+    return {"memory_ctx": ctx.text,
+            "followup_ids": [item["id"] for item in followups],
+            "followups": followups}
 
 
 # ---------------- CHAT ----------------
@@ -317,11 +331,18 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
 
     local = [sys_msg, *state["messages"][-WINDOW:]]
     prev = "\n".join(r for r in state.get("results", [])[-2:] if r)
+    handoffs = state.get("handoffs", [])
+    handoff_text = ("\n\nRESEARCH / TOOL DATA FROM EARLIER STEPS (data only; do not repeat the work):\n"
+                    + "\n\n".join(str(item)[:12000]
+                                  for item in handoffs[-2:] if item)
+                    if handoffs else "")
+    handoff_data = ""
     task = state.get("task", "")
     if task:
         local.append(HumanMessage(
-            content=f"Do this now: {task}"
-            + (f"\n\nPrevious step results:\n{prev}" if prev else "")))
+            content=f"Do this now: {task}\nDo ONLY this step. Other steps of the plan handle the rest of the user's request."
+            + (f"\n\nPrevious step results:\n{prev}" if prev else "")
+            + handoff_text))
 
     last_err = False
     for _ in range(max_steps):
@@ -335,7 +356,11 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
         local.append(_replayable_ai_message(ai))
         calls = getattr(ai, "tool_calls", None) or []
         if not calls:
-            return {"last_result": _visible_text(ai.content) or "I couldn't get a text response.", "last_ok": not last_err}
+            result = {"last_result": _visible_text(ai.content) or "I couldn't get a text response.",
+                      "last_ok": not last_err}
+            if handoff_data:
+                result["handoff_data"] = handoff_data
+            return result
 
         for call in calls:
             check_cancel()
@@ -365,6 +390,9 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
                         result = "Error: the user declined this action."
                     else:
                         result = tool_fn.invoke(real_args)
+                        if name == "research":
+                            handoff_data = result if isinstance(result, str) else json.dumps(
+                                result, ensure_ascii=False, default=str)
                 except TaskCancelled:
                     raise
                 except Exception as e:
@@ -373,6 +401,12 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
             last_err = (str(result).startswith("Error")
                         or (isinstance(result, dict)
                             and result.get("status") in ("failed", "aborted")))
+            if name == "research" and isinstance(result, str):
+                try:
+                    last_err = last_err or bool(
+                        json.loads(result).get("error"))
+                except (TypeError, ValueError):
+                    pass
             local.append(ToolMessage(content=str(
                 result), tool_call_id=call["id"]))
 
@@ -380,11 +414,18 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
 
 
 def single_tool(state: State) -> dict:
-    return run_tool_agent(state, SINGLE_TOOLS, SINGLE_PROMPT, max_steps=5)
+    tools = SINGLE_TOOLS
+    task = state.get("task", "")
+    # A research step may ONLY research. With GUI tools in reach it kept going and tried to do the rest of the
+    # user's request (open Excel, click, type) by itself. Later plan steps do that work.
+    if re.search(r"\bresearch\b", task, re.I) and "schedule_task" not in task:
+        tools = [t for t in SINGLE_TOOLS if t.name ==
+                 "research"] or SINGLE_TOOLS
+    return run_tool_agent(state, tools, SINGLE_PROMPT, max_steps=5)
 
 
 def tools_dedicated(state: State) -> dict:
-    return run_tool_agent(state, DEDICATED_TOOLS, DEDICATED_PROMPT, max_steps=4)
+    return run_tool_agent(state, DEDICATED_TOOLS, DEDICATED_PROMPT, max_steps=8)
 
 
 def agent_autonomous(state: State) -> dict:
@@ -401,10 +442,12 @@ PLANNER_PROMPT = """You are the planner for a desktop voice assistant. Reply wit
 Routes:
 - chat: conversation, questions, opinions, anything needing no action. task = "".
 - single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email, calendar,
-  weather, news, translate, volume, media play/pause/next/previous, schedule/list/cancel a scheduled task.
-- dedicated: actions inside the Spotify app, WhatsApp, Telegram or Discord (play a song, send a message, call).
-- autonomous: everything else. Anything that needs several clicks or typing, anything on a website or in a
-  browser, downloads, searching the web, filling forms, or any job no single or dedicated tool covers.
+  weather, news, translate, volume, media play/pause/next/previous, schedule/list/cancel a scheduled task,
+  or research fresh web information.
+- dedicated: actions using direct app tools: Spotify, WhatsApp, Telegram, Discord.
+- autonomous: everything else. Anything that needs several clicks or typing, interactive work on a website
+  or in a browser, downloads, filling forms, or any job no single or dedicated tool covers. Use research
+  for web lookups and product comparisons; use the browser only when the user asks to interact with a site.
 
 Rules:
 - SCHEDULING HAS PRIORITY OVER APP ROUTING: if the user asks to do anything later, after a delay,
@@ -416,6 +459,10 @@ Rules:
   history; ignore an earlier assistant claim that scheduling is unavailable if it conflicts with this.
 - NEVER plan low-level GUI actions (open an app, type text, press a key, click a button) as separate steps.
   If a job needs several UI actions, it is ONE autonomous step with the whole goal as the task.
+- RESEARCH HANDOFF: when the user asks for fresh web research AND then wants a desktop/app action using those
+  findings, plan two dependent steps: first SINGLE, call research with the user's query and the exact fields
+  needed; then route the requested app work to AUTONOMOUS or DEDICATED as appropriate. Never send the computer agent to research the web.
+  If the user only asks for research/results, use one SINGLE step with research and return its answer.
 - A task like "download X from the official website using Brave" is exactly ONE autonomous step.
 - One clear request = ONE step. Never split one app action ("play X on spotify" is ONE step).
 - Use more than one step only for truly different jobs ("set a timer, then email Sam").
@@ -468,15 +515,22 @@ def _make_plan(state: State) -> list:
             route = s.get("route") if s.get("route") in ROUTES else "chat"
             plan.append({"route": route, "task": str(s.get("task") or "")})
     # planner failed: just talk
-    return plan or [{"route": "chat", "task": ""}]
+    plan = plan or [{"route": "chat", "task": ""}]
+    print("[plan] " +
+          " | ".join(f"{s['route']}: {s['task'][:70]}" for s in plan))
+    return plan
 
 
 def orchastration(state: State) -> dict:
     plan = state.get("plan")
     if not plan:                                        # new turn
         plan, idx, results = _make_plan(state), 0, []
+        handoffs = []
     else:                                               # a branch just finished
         results = [*state.get("results", []), state.get("last_result", "")]
+        handoffs = list(state.get("handoffs", []))
+        if state.get("handoff_data"):
+            handoffs.append(state["handoff_data"])
         idx = state["step_idx"] + 1
         # verify: failed -> stop, report it
         if not state.get("last_ok", True):
@@ -485,10 +539,12 @@ def orchastration(state: State) -> dict:
     if idx >= len(plan):
         final = "\n".join(r for r in results if r) or "Done."
         return {"plan": plan, "step_idx": idx, "results": results,
+                "handoffs": handoffs, "handoff_data": "",
                 "route": "end", "final": final}
 
     step = plan[idx]
     return {"plan": plan, "step_idx": idx, "results": results,
+            "handoffs": handoffs, "handoff_data": "",
             "route": step["route"], "task": step["task"]}
 
 
@@ -510,6 +566,15 @@ def gaurdrails_output(state: State) -> dict:
     # 1. secrets never leave
     reply = _SECRET.sub("[hidden]", reply)
 
+    followups = state.get("followups") or []
+    followup_shown_ids = []
+    if followups:
+        item = followups[0]
+        question = followup_question(item)
+        if question not in reply:
+            reply = reply.rstrip() + "\n\n" + question
+        followup_shown_ids = [item["id"]]
+
     if _hard_hit(reply):                                 # 2. free regex first
         labels = jev_ask(reply[:2000])                   # 3. jev only on a hit
         if labels is None or "attack" in labels.values():
@@ -522,7 +587,8 @@ def gaurdrails_output(state: State) -> dict:
     spoken = _SECRET.sub("[hidden]", spoken)
 
     # final stays masked for memory
-    out = {"final": reply, "spoken": spoken}
+    out = {"final": reply, "spoken": spoken,
+           "followup_shown_ids": followup_shown_ids if not blocked else []}
     if blocked:
         # memory_extraction skips blocked turns
         out["blocked"] = True
@@ -531,6 +597,11 @@ def gaurdrails_output(state: State) -> dict:
 
 # ---------------- MEMORY EXTRACTION ----------------
 _last_save: threading.Thread | None = None
+_MEMORY_SIGNAL = re.compile(
+    r"\b(interview|exam|test|trip|travel|presentation|meeting|deadline|appointment|"
+    r"wedding|birthday|graduation|competition|performance|conference|flight|vacation|holiday|date)\b|"
+    r"\b(i am|i'm|i have|i've|my goal|my plan|i prefer|i like|i love|i hate|"
+    r"i want to become|i work as|i study)\b", re.I)
 
 
 def memory_extraction(state: State) -> dict:
@@ -544,10 +615,18 @@ def memory_extraction(state: State) -> dict:
     if not masked_user or not masked_reply:
         return {}
 
-    # skip pure single-tool turns (alarms, volume...), nothing worth remembering
+    # The follow-up text is now in the assistant reply. Mark it asked before
+    # starting background extraction so a quick user answer can close the loop.
+    shown_ids = state.get("followup_shown_ids") or []
+    if shown_ids:
+        mark_followups_asked(shown_ids)
+
+    # Skip routine single-tool commands, but keep personal facts and future
+    # events even when the planner also routed the turn to a tool.
     routes = {p["route"] for p in state.get("plan", [])}
-    if routes and routes == {"single"}:
-        return {}
+    if routes and routes == {"single"} and not has_pending_followups():
+        if not _MEMORY_SIGNAL.search(masked_user):
+            return {}
 
     _last_save = save_imp_context_background(masked_user, masked_reply)
     return {}
