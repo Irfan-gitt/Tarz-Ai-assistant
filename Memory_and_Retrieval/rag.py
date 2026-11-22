@@ -143,6 +143,24 @@ def _hint(item: dict, now: datetime) -> str:
     return f"- {item['text']}{phrase}. Ask how it went. Skip it if the user already told you."
 
 
+def followup_question(item: dict) -> str:
+    """Create a short, readable one-time chat reminder from a stored event memory."""
+    text = str(item.get("text", "")).lower()
+    labels = (
+        ("job interview", "your job interview"), ("interview", "your interview"),
+        ("exam", "your exam"), ("test", "your test"), ("date", "your date"),
+        ("trip", "your trip"), ("travel", "your trip"),
+        ("presentation", "your presentation"), ("meeting", "your meeting"),
+        ("deadline", "your deadline"), ("performance", "your performance"),
+    )
+    event = next((label for word, label in labels if word in text), None)
+    if event:
+        return f"Quick follow-up: how did {event} go?"
+    when = mem._parse_time(item.get("event_at") or item.get("follow_up_at"))
+    date = f" on {when:%d %b}" if when else ""
+    return f"Quick follow-up: how did the event you mentioned{date} go?"
+
+
 def _render(core: list, relevant: list, followups: list, now: datetime) -> str:
     parts = []
     if core:
