@@ -81,6 +81,21 @@ session_map: dict[str, str] = {}
 graph_lock = threading.Lock()   # a user turn and a scheduled turn must never overlap
 _local = threading.local()      # _local.unattended = True while a scheduled job runs
 GRAPH = None
+_PROGRESS_HOOK = None
+
+
+def set_progress_hook(hook=None):
+    """Register a thread-safe UI callback for agent plan/tool progress."""
+    global _PROGRESS_HOOK
+    _PROGRESS_HOOK = hook
+
+
+def _emit_progress(event: dict):
+    if _PROGRESS_HOOK is not None:
+        try:
+            _PROGRESS_HOOK(dict(event))
+        except Exception as exc:
+            print(f"[ui] progress update failed: {exc}")
 
 
 def _unattended() -> bool:
@@ -367,6 +382,7 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
         for call in calls:
             check_cancel()
             name, args = call["name"], call["args"]
+            _emit_progress({"type": "activity", "text": " ".join(name.split("_" )).capitalize()})
 
             if name == "ask_user":
                 answer = ask_human(args["question"])
@@ -508,6 +524,21 @@ user: schedule it for 11:32 instead
 def _make_plan(state: State) -> list:
     user_text = next((str(m.content) for m in reversed(state.get("messages", []))
                       if isinstance(m, HumanMessage)), "")
+    # YouTube owns the relevant search index and playback controls. Sending
+    # "find a video and play it" through general web research adds a slow,
+    # unrelated LLM handoff and often loses the exact playable video URL.
+    if (re.search(r"\byoutube\b", user_text, re.I)
+            and re.search(r"\b(play|watch|start playing)\b", user_text, re.I)
+            and re.search(r"\b(find|search|best|tutorial|video|song|music)\b", user_text, re.I)):
+        return [{
+            "route": "autonomous",
+            "task": (
+                "Search YouTube for the requested video, choose the best matching result, "
+                "play it, and verify playback. Preserve the exact subject and constraints "
+                f"from this request: {user_text}"
+            ),
+        }]
+
     file_action = bool(re.search(
         r"\b(list|show|search|find|read|create|make|copy|move|rename|delete|open|append|zip|compress|organize)\b",
         user_text, re.I))
@@ -529,6 +560,15 @@ def _make_plan(state: State) -> list:
     try:
         raw = get_gateway().invoke(
             CLASSIFY_LLMS, [sys_msg, *state["messages"][-WINDOW:]]).content
+    except Exception as exc:
+        # Never silently turn an action into chat when all planner models fail;
+        # that led TARZ to claim it could not use tools instead of reporting the
+        # actual model outage.
+        raise RuntimeError(
+            "TARZ could not plan this request because its classification models failed. "
+            "Check the provider errors above and try again."
+        ) from exc
+    try:
         data = json.loads(re.search(r"\[.*\]", raw, re.S).group())
     except Exception:
         data = []
@@ -562,11 +602,21 @@ def orchastration(state: State) -> dict:
 
     if idx >= len(plan):
         final = "\n".join(r for r in results if r) or "Done."
+        _emit_progress({"type": "finished", "text": final})
         return {"plan": plan, "step_idx": idx, "results": results,
                 "handoffs": handoffs, "handoff_data": "",
                 "route": "end", "final": final}
 
     step = plan[idx]
+    user_text = next((str(m.content) for m in reversed(state.get("messages", []))
+                      if isinstance(m, HumanMessage)), state.get("user_text", ""))
+    _emit_progress({
+        "type": "plan", "title": user_text,
+        "steps": [{"text": item["task"],
+                   "status": "done" if i < idx else "run" if i == idx else "todo"}
+                  for i, item in enumerate(plan)],
+        "active": f"Step {idx + 1} of {len(plan)} · {step['route']}",
+    })
     return {"plan": plan, "step_idx": idx, "results": results,
             "handoffs": handoffs, "handoff_data": "",
             "route": step["route"], "task": step["task"]}
