@@ -1,15 +1,10 @@
-from langchain_core.messages import ToolMessage
 from dotenv import load_dotenv
 
-import keyboard
 import threading
 from datetime import datetime
 import re
 import json
-from langgraph.checkpoint.memory import MemorySaver
-
 from langgraph.graph import StateGraph, START, END
-from langgraph.types import Command, interrupt
 from typing import Annotated
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
@@ -24,19 +19,16 @@ if hasattr(sys.stderr, "reconfigure"):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 
-from langsmith import traceable
-
 from config_settings.guardrails import Guardrails, jev_ask, restore, HARD, PII_RULES, TAG
-from config_settings.jev_gate import jev_gate
 from config_settings.llm_gateway import get_gateway, AllModelsFailed
 from config_settings.config import (
-    TOOL_CALLING_LLMS, PLAIN_LLMS, VISION_LLMS, CLASSIFY_LLMS,
+    TOOL_CALLING_LLMS, PLAIN_LLMS, CLASSIFY_LLMS,
     require_core_chat_provider,
 )
 from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
 from Prompts.prompt import SYSTEM
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_core.tools import tool
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import BaseTool, StructuredTool, tool
 
 from Tools.gmail import send_email, read_emails, search_emails
 from Tools.calendar_tool import create_event, list_events, delete_event
@@ -51,8 +43,6 @@ from Tools.scheduler import schedule_task, list_scheduled, cancel_scheduled, sta
 from Tools.Autonomous_layer.autonomous_agent import computer_agent, set_human_hooks
 from Tools.research_tool import research as research_tool
 
-from langchain_core.tools import BaseTool, StructuredTool
-
 from Actions.execute_action import click, type_text, press_key, read_screen, open_app, volume_control, wether_app, use_shortcut, set_alarm, news_update, set_timer, translate, clipboard, wait
 from Memory_and_Retrieval.memory import (
     save_imp_context_background, mark_followups_asked, get_due_followups,
@@ -61,11 +51,10 @@ from Memory_and_Retrieval.memory import (
 from Memory_and_Retrieval.rag import build_memory_context, followup_question
 from Tools.media_control import media_play_pause, media_next_track, media_previous_track
 from Audio.stt import live_listen
-from Audio.wake_word import wait_for_wake_word, play_done_chime, wake_hotkey_event
+from Audio.wake_word import wait_for_wake_word
 
 from Tools.cancel_state import cancel_event, TaskCancelled, check_cancel
 from Audio.tts import speak
-from Audio.orb_overlay import get_orb
 
 os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "false")
 os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "false")
@@ -465,7 +454,7 @@ Routes:
   weather, news, translate, volume, media play/pause/next/previous, schedule/list/cancel a scheduled task,
   or research fresh web information.
 - dedicated: actions using direct app and file tools: Spotify, WhatsApp, Telegram, Discord, File Manager.
-  Use File Manager for local file/folder operations; use Excel tools for workbook contents.
+  Use File Manager for local file/folder operations.
 - autonomous: everything else. Anything that needs several clicks or typing, interactive work on a website
   or in a browser, downloads, filling forms, or any job no single or dedicated tool covers. Use research
   for web lookups and product comparisons; use the browser only when the user asks to interact with a site.
@@ -486,8 +475,8 @@ Rules:
   If the user only asks for research/results, use one SINGLE step with research and return its answer.
 - LOCAL FILES: local listing, searching, reading, creating, copying, moving, renaming, deleting, zipping, or
   organizing files/folders must use the dedicated File Manager tools. Do not use computer_agent for these.
-- EXCEL: workbook contents must use the dedicated Excel tools; opening the Excel desktop app is autonomous
-  only when the user explicitly asks to open the app.
+- EXCEL / SPREADSHEETS: there is no Excel tool. Creating or editing a workbook is ONE autonomous step
+  (open Excel and do the work on screen). Do not send it to File Manager and do not invent excel_* tools.
 - A task like "download X from the official website using Brave" is exactly ONE autonomous step.
 - One clear request = ONE step. Never split one app action ("play X on spotify" is ONE step).
 - Use more than one step only for truly different jobs ("set a timer, then email Sam").
