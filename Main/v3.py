@@ -45,6 +45,7 @@ from Tools.Dedicated_Tools.spotify_gui import spotify_play_playlist, spotify_sea
 from Tools.Dedicated_Tools.telegram_gui import telegram_message_user
 from Tools.Dedicated_Tools.whatsapp_gui import whatsapp_send_message, whatsapp_call
 from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_toggle_mute, discord_toggle_deafen, discord_answer_call, discord_decline_call
+from Tools.Dedicated_Tools.file_manager import FILE_TOOLS, RISKY as FILE_MANAGER_RISKY
 from Tools.scheduler import schedule_task, list_scheduled, cancel_scheduled, start as start_scheduler
 
 from Tools.Autonomous_layer.autonomous_agent import computer_agent, set_human_hooks
@@ -139,6 +140,7 @@ DEDICATED_TOOLS = [
     discord_send_message, discord_toggle_mute, discord_toggle_deafen,
     discord_answer_call, discord_decline_call,
     telegram_message_user,
+    *FILE_TOOLS,
 ]
 
 
@@ -306,7 +308,7 @@ def _bind_and_call(messages, tools):
 
 RISKY_TOOLS = {"send_email", "delete_event", "create_event",
                "whatsapp_send_message", "whatsapp_call",
-               "discord_send_message", "telegram_message_user"}
+               "discord_send_message", "telegram_message_user"} | FILE_MANAGER_RISKY
 
 
 def _restore_args(args: dict) -> dict:
@@ -380,7 +382,9 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
             else:
                 try:
                     real_args = _restore_args(args)
-                    if name in RISKY_TOOLS:
+                    needs_confirmation = name in RISKY_TOOLS and not (
+                        name == "organize_folder" and real_args.get("dry_run", True))
+                    if needs_confirmation:
                         # NEW: scheduled job -> approval was given when it was scheduled
                         ok = _approved() if _unattended() else human_in_the_loop(
                             f"Run {name} with {real_args}?")
@@ -444,7 +448,8 @@ Routes:
 - single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email, calendar,
   weather, news, translate, volume, media play/pause/next/previous, schedule/list/cancel a scheduled task,
   or research fresh web information.
-- dedicated: actions using direct app tools: Spotify, WhatsApp, Telegram, Discord.
+- dedicated: actions using direct app and file tools: Spotify, WhatsApp, Telegram, Discord, File Manager.
+  Use File Manager for local file/folder operations; use Excel tools for workbook contents.
 - autonomous: everything else. Anything that needs several clicks or typing, interactive work on a website
   or in a browser, downloads, filling forms, or any job no single or dedicated tool covers. Use research
   for web lookups and product comparisons; use the browser only when the user asks to interact with a site.
@@ -463,6 +468,10 @@ Rules:
   findings, plan two dependent steps: first SINGLE, call research with the user's query and the exact fields
   needed; then route the requested app work to AUTONOMOUS or DEDICATED as appropriate. Never send the computer agent to research the web.
   If the user only asks for research/results, use one SINGLE step with research and return its answer.
+- LOCAL FILES: local listing, searching, reading, creating, copying, moving, renaming, deleting, zipping, or
+  organizing files/folders must use the dedicated File Manager tools. Do not use computer_agent for these.
+- EXCEL: workbook contents must use the dedicated Excel tools; opening the Excel desktop app is autonomous
+  only when the user explicitly asks to open the app.
 - A task like "download X from the official website using Brave" is exactly ONE autonomous step.
 - One clear request = ONE step. Never split one app action ("play X on spotify" is ONE step).
 - Use more than one step only for truly different jobs ("set a timer, then email Sam").
@@ -497,6 +506,21 @@ user: schedule it for 11:32 instead
 
 
 def _make_plan(state: State) -> list:
+    user_text = next((str(m.content) for m in reversed(state.get("messages", []))
+                      if isinstance(m, HumanMessage)), "")
+    file_action = bool(re.search(
+        r"\b(list|show|search|find|read|create|make|copy|move|rename|delete|open|append|zip|compress|organize)\b",
+        user_text, re.I))
+    file_target = bool(re.search(
+        r"\b(file\s*manager|filemanager|file explorer|files?|folders?|directories|directory|downloads|documents|pictures)\b",
+        user_text, re.I))
+    fresh_research = bool(re.search(
+        r"\b(on amazon|search (?:the )?(?:web|online)|research|latest|current prices?|"
+        r"top\s+\d+|best\s+\d+|compare|cheapest)\b", user_text, re.I))
+    if file_action and file_target and not fresh_research and not re.search(
+            r"\b(excel|spreadsheet|workbook|\.xlsx|\.xlsm)\b", user_text, re.I):
+        return [{"route": "dedicated", "task": f"Use the dedicated File Manager tools to perform this local file task: {user_text}. Do not use GUI automation. Check paths with list_dir/search_files when needed."}]
+
     info = (f"\n\nSingle tools: {', '.join(t.name for t in SINGLE_TOOLS)}"
             f"\nDedicated tools: {', '.join(t.name for t in DEDICATED_TOOLS)}")
     ctx = state.get("memory_ctx", "")
