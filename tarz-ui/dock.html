@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TARZ Dock</title>
+  <style>
+    :root { color-scheme:dark; font-family:Inter,"Segoe UI",sans-serif; }
+    * { box-sizing:border-box; }
+    html,body { width:100%;height:100%;margin:0;overflow:hidden;background:transparent!important;color:#f4f2f8; }
+    body { padding:4px; }
+    #dock { position:relative;height:100%;width:100%;display:flex;align-items:center;gap:9px;padding:7px 28px 7px 9px;background:rgba(31,32,36,.97);border:1px solid #414249;border-radius:28px;box-shadow:0 5px 18px rgba(0,0,0,.28);overflow:hidden; }
+    #dock.listening { border-color:#75471f; }
+    #dock.speaking { border-color:#68459a; }
+    #orb { position:relative;width:36px;height:36px;flex:0 0 36px;border-radius:50%;background:radial-gradient(circle at 32% 25%,#fff 0,#dfc1ff 14%,#a35aff 40%,#7127dd 70%,#32105f 100%);box-shadow:0 0 10px #904bea,0 0 18px #974eff55;animation:breathe 2.4s ease-in-out infinite;cursor:grab; }
+    #orb:after { content:"";position:absolute;inset:4px 6px 12px;border-radius:50%;background:radial-gradient(ellipse at 35% 15%,#ffffffdf,#ffffff20 55%,transparent 74%); }
+    #dock.listening #orb { background:radial-gradient(circle at 32% 25%,#fff 0,#ffd5a4 14%,#ff9b36 40%,#ee5d12 69%,#632104 100%);box-shadow:0 0 12px #fa7d2466; }
+    #dock.speaking #orb { background:radial-gradient(circle at 32% 25%,#fff 0,#fff0e6 18%,#ffc69e 43%,#c88aff 75%,#7142a8 100%); }
+    @keyframes breathe { 0%,100%{transform:scale(.96)}50%{transform:scale(1.06)} }
+    .identity { min-width:72px;max-width:42%;flex:1 1 38%;overflow:hidden;cursor:grab; }
+    .eyebrow { color:#aaaab4;font:600 9px Inter,"Segoe UI",sans-serif;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    #caption { margin-top:4px;color:#f2eff6;font:500 11px/1.25 Inter,"Segoe UI",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:1; }
+    #caption.changing { animation:step-in .32s ease both; }
+    @keyframes step-in { from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)} }
+    #progress { display:none;height:2px;margin-top:4px;overflow:hidden;border-radius:2px;background:#302d35; }
+    #progress-fill { width:0;height:100%;background:linear-gradient(90deg,#a95dff,#df9aff);transition:width .3s ease; }
+    #dock.working #progress { display:block; }
+    #entry { min-width:0;flex:1 1 auto;display:flex;align-items:center;gap:6px;margin:0; }
+    #prompt { min-width:35px;flex:1;height:30px;padding:0 10px;border:1px solid #45464d;border-radius:18px;outline:0;background:#191a1e;color:#e8e5ed;font:11px Inter,"Segoe UI",sans-serif;user-select:text;-webkit-user-select:text; }
+    #prompt:focus { border-color:#a581d2; }
+    #prompt::placeholder { color:#85828c; }
+    button { flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;border:1px solid #4a4b53;border-radius:50%;background:#25262b;color:#e0d6ef;cursor:pointer; }
+    button:hover { border-color:#8063a1;background:#302d37; }
+    button svg { width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
+    #stop { display:none;color:#ffb2ad;border-color:#644041;background:#211719; }
+    #dock.busy #send { display:none; }
+    #dock.busy #stop { display:grid; }
+    #dock.busy #mic { display:none; }
+    #dock.approval #send,#dock.approval #mic { display:none; }
+    #dock.approval #stop { display:grid; }
+    #close { position:absolute;right:4px;top:1px;width:18px;height:18px;border:0;border-radius:50%;background:#25262b;color:#c2bec9;font-size:15px;line-height:1;padding:0; }
+    #close:hover { color:#eee9f5;background:#302c36; }
+    @media(max-width:390px) { .identity{max-width:35%;min-width:64px} #dock{gap:6px;padding-left:7px;padding-right:23px} #prompt{padding-inline:7px} }
+  </style>
+</head>
+<body>
+  <main id="dock" class="idle">
+    <div id="orb" class="pywebview-drag-region" aria-hidden="true" title="Drag TARZ dock"></div>
+    <div class="identity pywebview-drag-region" id="identity" title="Drag TARZ dock">
+      <div class="eyebrow" id="phase">TARZ · READY</div>
+      <div id="caption">Ready when you are</div>
+      <div id="progress"><div id="progress-fill"></div></div>
+    </div>
+    <form id="entry">
+      <input id="prompt" autocomplete="off" placeholder="Ask TARZ…" aria-label="Message TARZ">
+      <button type="button" id="mic" title="Speak a task" aria-label="Speak"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 18v3m-4 0h8"/></svg></button>
+      <button type="submit" id="send" title="Send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+      <button type="button" id="stop" title="Stop TARZ" aria-label="Stop"><svg viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><rect x="5" y="5" width="14" height="14" rx="3"/></svg></button>
+    </form>
+    <button type="button" id="close" title="Close dock" aria-label="Close dock">×</button>
+  </main>
+  <script>
+    const dock=document.getElementById('dock'),phase=document.getElementById('phase'),caption=document.getElementById('caption');
+    let previousCaption='';
+    function render(s){
+      const state=s.state||'idle',steps=s.steps||[],activeStep=steps.find(x=>x.status==='run');
+      dock.className=`${state} ${state==='working'?'busy':''}`;
+      const stepMatch=(s.step_label||'').match(/step\s+(\d+)\s+of\s+(\d+)/i);
+      let label={idle:'TARZ · READY',listening:'LISTENING',thinking:'THINKING',speaking:'SPEAKING',working:stepMatch?`WORKING · STEP ${stepMatch[1]} OF ${stepMatch[2]}`:'WORKING',done:'TASK COMPLETE',error:'TASK ERROR',approval:'APPROVAL NEEDED'}[state]||'TARZ · READY';
+      phase.textContent=label;
+      const current=['done','error','approval'].includes(state)?(s.active||s.title||'Task finished'):(activeStep?.text||s.active||s.title||'Ready when you are');
+      if(current!==previousCaption){caption.classList.remove('changing');void caption.offsetWidth;caption.textContent=current;caption.classList.add('changing');previousCaption=current;}
+      caption.title=s.title||current;
+      const completed=steps.filter(x=>x.status==='done').length;
+      const progress=steps.length?Math.round((completed+(activeStep ? .55 : 0))/steps.length*100):0;
+      document.getElementById('progress-fill').style.width=`${state==='done'?100:progress}%`;
+      const input=document.getElementById('prompt');
+      input.placeholder=state==='working'?'Add a task…':'Ask TARZ…';
+    }
+    async function poll(){try{render(await window.pywebview.api.get_dock_state());}catch(_){}}
+    window.addEventListener('pywebviewready',()=>{poll();setInterval(poll,220);});
+    document.getElementById('entry').addEventListener('submit',async e=>{e.preventDefault();const input=document.getElementById('prompt'),text=input.value.trim();if(!text)return;input.value='';await window.pywebview.api.send_message_from_dock(text);});
+    document.getElementById('prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();document.getElementById('entry').requestSubmit();}});
+    document.getElementById('mic').addEventListener('click',async()=>{const button=document.getElementById('mic');button.disabled=true;try{const result=await window.pywebview.api.listen_once();if(result.ok){const input=document.getElementById('prompt');input.value=result.text;document.getElementById('entry').requestSubmit();}else if(result.error){caption.textContent=result.error;}}finally{button.disabled=false;}});
+    document.getElementById('stop').addEventListener('click',()=>window.pywebview.api.stop_current_task());
+    document.getElementById('close').addEventListener('click',()=>window.pywebview.api.close_dock());
+  </script>
+</body>
+</html>

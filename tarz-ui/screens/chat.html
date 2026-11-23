@@ -1,39 +1,528 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TARZ · Chat</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=Geist+Mono&display=swap" rel="stylesheet">
-<style>
-*{box-sizing:border-box}body{margin:0;background:#0a0a0a;color:#fff;font:14px/1.5 Inter,system-ui,sans-serif}button,input{font:inherit}button{cursor:pointer}a{color:inherit;text-decoration:none}.app{height:100vh;min-height:520px;display:flex}.sb{width:220px;flex:none;border-right:1px solid #212327;padding:22px 14px;display:flex;flex-direction:column;gap:8px}.brand{font-size:20px;padding:0 14px 24px}.nav{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:8px;color:#aeb0b5;transition:background .15s,color .15s}.nav.active,.nav:hover{background:#1a1c20;color:#fff}.nav-icon{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.main{min-width:0;flex:1;display:flex;flex-direction:column;position:relative;overflow:hidden}.top{height:64px;flex:none;border-bottom:1px solid #212327;padding:0 28px;display:flex;align-items:center;justify-content:space-between;z-index:1}.top h1{font-size:18px;font-weight:500;margin:0}.btn,.btn2{border-radius:999px;padding:8px 15px}.btn{background:#fff;color:#111;border:1px solid #fff}.btn2{background:#0a0a0a;color:#fff;border:1px solid #42444a}.btn:disabled,.btn2:disabled{opacity:.55;cursor:wait}.chat{position:relative;z-index:1;flex:1;min-height:0;display:flex;flex-direction:column;width:min(850px,100%);margin:0 auto;padding:30px 24px 24px}.messages{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;display:flex;flex-direction:column;gap:14px;padding:10px 0 24px}.messages::-webkit-scrollbar{display:none;width:0;height:0}.welcome{margin:auto;text-align:center;color:#aeb0b5}.welcome small{font:12px "Geist Mono",monospace;letter-spacing:1px;color:#ff7a17}.welcome h2{font-size:clamp(30px,5vw,48px);font-weight:400;line-height:1.1;margin:14px 0}.bubble{max-width:86%;padding:12px 16px;border:1px solid #292b30;border-radius:14px;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#1a1c20}.assistant{align-self:flex-start;background:#111214}.composer{border:1px solid #44464c;background:#17181b;border-radius:20px;padding:12px;box-shadow:0 8px 36px #0008}.composer textarea{width:100%;min-height:48px;max-height:180px;resize:vertical;background:transparent;border:0;outline:0;color:#fff;font:16px Inter,sans-serif;padding:7px}.composer-foot{display:flex;justify-content:space-between;align-items:center;gap:8px}.composer-tools{display:flex;align-items:center;gap:8px}.icon-btn{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:transparent;border:1px solid #45474d;color:#fff}.icon-btn.active{background:#fff;color:#111}.icon-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.send{width:40px;height:40px;border-radius:50%;border:0;background:#fff;color:#111;display:grid;place-items:center}.send svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.status{min-height:22px;color:#aeb0b5;font-size:12px;padding:7px 4px 0}.glow{position:absolute;pointer-events:none;left:50%;bottom:-180px;width:min(900px,100vw);height:420px;transform:translateX(-50%);background:radial-gradient(ellipse at 50% 100%,#ff7a1740,#7c3aed35 45%,transparent 70%);filter:blur(50px)}
-@media(max-width:650px){.sb{width:76px;padding:18px 8px}.brand{padding:4px;text-align:center}.brand span{display:none}.nav{justify-content:center;font-size:0;padding:12px}.nav-icon{width:20px;height:20px}.chat{padding:16px 12px}.top{padding:0 14px}}
-dialog{width:min(480px,calc(100vw - 32px));padding:0;color:#fff;background:#151619;border:1px solid #373940;border-radius:16px;box-shadow:0 24px 80px #000a}dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}.dialog-card{padding:24px}.dialog-title{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:500}.dialog-badge{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:#ff7a1718;color:#ff9a50}.dialog-badge svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.dialog-message{margin:16px 0;color:#d2d3d7;white-space:pre-wrap;overflow-wrap:anywhere}.dialog-answer{display:block;width:100%;min-height:80px;resize:vertical;padding:10px 12px;border:1px solid #3b3d44;border-radius:9px;background:#0d0e10;color:#fff;font:14px Inter,sans-serif}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}
-.assistant{font-family:Manrope,"Segoe UI",sans-serif;font-size:15px;line-height:1.7;letter-spacing:-.12px}.assistant p{margin:0 0 12px}.assistant p:last-child{margin-bottom:0}.assistant ul,.assistant ol{margin:0 0 12px;padding-left:22px}.assistant li{padding:2px 0}.assistant strong{font-weight:700;color:#fff}.assistant em{color:#e6e7ea}.assistant code{font:13px "Cascadia Code",Consolas,monospace;color:#ffbd91;background:#202227;padding:2px 5px;border-radius:5px}
-</style></head>
-<body><div class="app">
-<aside class="sb"><div class="brand">TARZ <span style="color:#ff7a17">·</span></div>
-<a class="nav active" href="chat.html"><svg class="nav-icon" viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.5-4A7.5 7.5 0 1 1 20 11.5Z"/></svg>Chat</a>
-<a class="nav" href="voice.html"><svg class="nav-icon" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"/></svg>Speech</a></aside>
-<main class="main"><div class="glow"></div><header class="top"><h1>Chat</h1><button id="new-chat" class="btn2" type="button"><span aria-hidden="true">＋</span> New chat</button></header>
-<section class="chat"><div id="messages" class="messages" aria-live="polite"><div id="welcome" class="welcome"><small>// TARZ IS READY</small><h2>What should I do?</h2><div>Type a message, or use speech input.</div></div></div>
-<form id="composer" class="composer"><label for="message" style="position:absolute;left:-9999px">Message</label><textarea id="message" placeholder="Ask TARZ anything…" rows="2"></textarea><div class="composer-foot"><div class="composer-tools">
-<button id="listen" class="icon-btn" type="button" aria-label="Transcribe speech" title="Speech to text"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-<button id="tts-toggle" class="icon-btn" type="button" aria-label="Toggle voice replies" title="Voice replies"><svg viewBox="0 0 24 24"><path d="M3 10v4h4l5 4V6l-5 4H3zM16 9a5 5 0 010 6M18.5 6.5a9 9 0 010 11"/></svg></button>
-<a class="btn2" href="voice.html"><svg class="nav-icon" style="width:15px;height:15px;vertical-align:-3px" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10m-7 5h4"/><circle cx="8" cy="7" r="2"/><circle cx="15" cy="12" r="2"/></svg> Speech options</a></div>
-<button id="send" class="send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div id="status" class="status" role="status"></div></section></main></div>
-<script>
-(()=>{const form=document.getElementById('composer'),input=document.getElementById('message'),send=document.getElementById('send'),listen=document.getElementById('listen'),tts=document.getElementById('tts-toggle'),messages=document.getElementById('messages'),welcome=document.getElementById('welcome'),status=document.getElementById('status');let settings={tts_provider:'groq',tts_enabled:false},activeQuestion=null,currentPendingBubble=null,questionAsked=false;const stop=document.createElement('button');stop.type='button';stop.className='send';stop.setAttribute('aria-label','Stop TARZ');stop.title='Stop TARZ (Ctrl+Shift+Space)';stop.hidden=true;stop.style.display='none';stop.style.background='#ef4444';stop.innerHTML='<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';send.parentElement.insertBefore(stop,send);
-function api(){if(!window.pywebview?.api)throw new Error('Launch TARZ with launch-v3-ui.bat to use chat and speech.');return window.pywebview.api}
-function inlineText(parent,text){const token=/\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\*([^*]+)\*|_([^_]+)_/g;let last=0,match;while((match=token.exec(text))){if(match.index>last)parent.append(document.createTextNode(text.slice(last,match.index)));const strong=match[1]||match[2],code=match[3],em=match[4]||match[5],node=document.createElement(strong?'strong':code?'code':em?'em':'span');node.textContent=strong||code||em;parent.append(node);last=token.lastIndex}if(last<text.length)parent.append(document.createTextNode(text.slice(last)))}
-function formatAssistant(element,text){const blocks=text.trim().split(/\n\s*\n/).filter(Boolean);for(const block of blocks){const lines=block.split('\n'),isBullet=lines.every(line=>/^\s*[-*]\s+/.test(line)),isNumbered=lines.every(line=>/^\s*\d+[.)]\s+/.test(line));if(isBullet||isNumbered){const list=document.createElement(isBullet?'ul':'ol');for(const line of lines){const item=document.createElement('li');inlineText(item,line.replace(/^\s*(?:[-*]|\d+[.)])\s+/,''));list.append(item)}element.append(list)}else{const paragraph=document.createElement('p');lines.forEach((line,index)=>{if(index)paragraph.append(document.createElement('br'));inlineText(paragraph,line)});element.append(paragraph)}}}
-function setAssistantText(el,text){el.replaceChildren();formatAssistant(el,String(text))}
-function bubble(role,text){welcome.hidden=true;const el=document.createElement('div');el.className='bubble '+role;if(role==='assistant')setAssistantText(el,text);else el.textContent=text;messages.append(el);messages.scrollTop=messages.scrollHeight;return el}
-async function load(){try{settings=await api().get_voice_settings();tts.classList.toggle('active',settings.tts_enabled&&settings.tts_provider!=='off');listen.disabled=!!settings.background_listening;listen.title=settings.background_listening?'Turn off background listening in Speech options to use manual transcription.':'Speech to text';if(settings.background_listening)status.textContent='Background listening is on. Say “hey” to start a voice turn.'}catch(e){status.textContent=e.message}}
-form.addEventListener('submit',async e=>{e.preventDefault();const text=input.value.trim();if(!text)return;if(activeQuestion){const question=activeQuestion;bubble('user',text);input.value='';input.disabled=true;send.disabled=true;status.textContent='Sending your reply...';try{const result=await api().answer_question(question.id,text);if(!result.ok)throw new Error(result.error||'Could not send your reply.');if(activeQuestion&&activeQuestion.id===question.id)activeQuestion=null;status.textContent='Continuing TARZ’s task...'}catch(err){input.disabled=false;send.disabled=false;status.textContent=err.message||String(err);input.focus()}return}try{const a=api();bubble('user',text);input.value='';input.disabled=true;send.disabled=true;send.hidden=true;send.style.display='none';stop.hidden=false;stop.style.display='grid';stop.disabled=false;status.textContent='';const pending=bubble('assistant','Thinking...');currentPendingBubble=pending;questionAsked=false;const result=await a.send_message(text);const finalText=result.ok?result.reply:(result.error||'TARZ could not answer.');if(questionAsked)bubble('assistant',finalText);else setAssistantText(pending,finalText);currentPendingBubble=null;questionAsked=false}catch(err){status.textContent=err.message||String(err)}finally{input.disabled=false;send.disabled=false;send.hidden=false;send.style.display='grid';stop.hidden=true;stop.style.display='none';stop.disabled=false;input.focus();messages.scrollTop=messages.scrollHeight}});
-stop.addEventListener('click',async()=>{stop.disabled=true;if(activeQuestion){activeQuestion=null;input.disabled=true;send.disabled=true;send.hidden=true;send.style.display='none'}status.textContent='Stopping TARZ...';try{const result=await api().stop_current_task();if(!result.ok)status.textContent=result.message}catch(err){status.textContent=err.message||String(err)}});
-input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}});
-document.getElementById('new-chat').addEventListener('click',async()=>{try{await api().new_chat();messages.querySelectorAll('.bubble').forEach(x=>x.remove());welcome.hidden=false;status.textContent='';input.focus()}catch(e){status.textContent=e.message}});
-listen.addEventListener('click',async()=>{listen.disabled=true;status.textContent='Listening…';try{const result=await api().listen_once();if(result.ok){input.value=[input.value.trim(),result.text].filter(Boolean).join(' ');input.focus();status.textContent='Speech transcribed.'}else status.textContent=result.error||'No speech recognized.'}catch(e){status.textContent=e.message||String(e)}finally{listen.disabled=!!settings.background_listening}});
-tts.addEventListener('click',async()=>{try{if(settings.tts_provider==='off'){status.textContent='Choose a voice in Speech options first.';return}settings.tts_enabled=!settings.tts_enabled;const result=await api().save_voice_settings(settings);if(!result.ok)throw new Error(result.error);settings=result.settings;tts.classList.toggle('active',settings.tts_enabled);status.textContent=settings.tts_enabled?'Voice replies on.':'Voice replies off.'}catch(e){status.textContent=e.message||String(e)}});
-async function poll(){if(!window.pywebview?.api)return;try{const result=await api().get_events();for(const event of result.events||[]){if(event.user){bubble('user',event.user);messages.scrollTop=messages.scrollHeight}if(event.assistant){bubble('assistant',event.assistant);messages.scrollTop=messages.scrollHeight}if(event.reply){bubble('assistant',event.reply);messages.scrollTop=messages.scrollHeight}if(event.question){activeQuestion=event.question;questionAsked=true;if(currentPendingBubble){setAssistantText(currentPendingBubble,event.question.text);currentPendingBubble=null}else bubble('assistant',event.question.text);input.disabled=false;send.disabled=false;send.hidden=false;send.style.display='grid';status.textContent='Reply in the message box to continue.';input.focus()}if(event.error)status.textContent=event.error}}catch(e){}}
-window.addEventListener('pywebviewready',load);load();setInterval(poll,700)})();
-</script></body></html>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TARZ · Chat</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=Geist+Mono&display=swap"
+    rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      color: #fff;
+      font: 14px/1.5 Inter, system-ui, sans-serif
+    }
+
+    button,
+    input {
+      font: inherit
+    }
+
+    button {
+      cursor: pointer
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none
+    }
+
+    .app {
+      height: 100vh;
+      min-height: 520px;
+      display: flex
+    }
+
+    .sb {
+      width: 220px;
+      flex: none;
+      border-right: 1px solid #212327;
+      padding: 22px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px
+    }
+
+    .brand {
+      font-size: 20px;
+      padding: 0 14px 24px
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 14px;
+      border-radius: 8px;
+      color: #aeb0b5;
+      transition: background .15s, color .15s
+    }
+
+    .nav.active,
+    .nav:hover {
+      background: #1a1c20;
+      color: #fff
+    }
+
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      flex: none;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round
+    }
+
+    .main {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden
+    }
+
+    .top {
+      height: 64px;
+      flex: none;
+      border-bottom: 1px solid #212327;
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 1
+    }
+
+    .top h1 {
+      font-size: 18px;
+      font-weight: 500;
+      margin: 0
+    }
+
+    .btn,
+    .btn2 {
+      border-radius: 999px;
+      padding: 8px 15px
+    }
+
+    .btn {
+      background: #fff;
+      color: #111;
+      border: 1px solid #fff
+    }
+
+    .btn2 {
+      background: #0a0a0a;
+      color: #fff;
+      border: 1px solid #42444a
+    }
+
+    .btn:disabled,
+    .btn2:disabled {
+      opacity: .55;
+      cursor: wait
+    }
+
+    .chat {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      width: min(850px, 100%);
+      margin: 0 auto;
+      padding: 30px 24px 24px
+    }
+
+    .messages {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 10px 0 24px
+    }
+
+    .messages::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0
+    }
+
+    .welcome {
+      margin: auto;
+      text-align: center;
+      color: #aeb0b5
+    }
+
+    .welcome small {
+      font: 12px "Geist Mono", monospace;
+      letter-spacing: 1px;
+      color: #ff7a17
+    }
+
+    .welcome h2 {
+      font-size: clamp(30px, 5vw, 48px);
+      font-weight: 400;
+      line-height: 1.1;
+      margin: 14px 0
+    }
+
+    .bubble {
+      max-width: 86%;
+      padding: 12px 16px;
+      border: 1px solid #292b30;
+      border-radius: 14px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere
+    }
+
+    .user {
+      align-self: flex-end;
+      background: #1a1c20
+    }
+
+    .assistant {
+      align-self: flex-start;
+      background: #111214
+    }
+
+    .composer {
+      border: 1px solid #44464c;
+      background: #17181b;
+      border-radius: 20px;
+      padding: 12px;
+      box-shadow: 0 8px 36px #0008
+    }
+
+    .composer textarea {
+      width: 100%;
+      min-height: 48px;
+      max-height: 180px;
+      resize: vertical;
+      background: transparent;
+      border: 0;
+      outline: 0;
+      color: #fff;
+      font: 16px Inter, sans-serif;
+      padding: 7px
+    }
+
+    .composer-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px
+    }
+
+    .composer-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: transparent;
+      border: 1px solid #45474d;
+      color: #fff
+    }
+
+    .icon-btn.active {
+      background: #fff;
+      color: #111
+    }
+
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round
+    }
+
+    .send {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 0;
+      background: #fff;
+      color: #111;
+      display: grid;
+      place-items: center
+    }
+
+    .send svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round
+    }
+
+    .status {
+      min-height: 22px;
+      color: #aeb0b5;
+      font-size: 12px;
+      padding: 7px 4px 0
+    }
+
+    .glow {
+      position: absolute;
+      pointer-events: none;
+      left: 50%;
+      bottom: -180px;
+      width: min(900px, 100vw);
+      height: 420px;
+      transform: translateX(-50%);
+      background: radial-gradient(ellipse at 50% 100%, #ff7a1740, #7c3aed35 45%, transparent 70%);
+      filter: blur(50px)
+    }
+
+    @media(max-width:650px) {
+      .sb {
+        width: 76px;
+        padding: 18px 8px
+      }
+
+      .brand {
+        padding: 4px;
+        text-align: center
+      }
+
+      .brand span {
+        display: none
+      }
+
+      .nav {
+        justify-content: center;
+        font-size: 0;
+        padding: 12px
+      }
+
+      .nav-icon {
+        width: 20px;
+        height: 20px
+      }
+
+      .chat {
+        padding: 16px 12px
+      }
+
+      .top {
+        padding: 0 14px
+      }
+    }
+
+    dialog {
+      width: min(480px, calc(100vw - 32px));
+      padding: 0;
+      color: #fff;
+      background: #151619;
+      border: 1px solid #373940;
+      border-radius: 16px;
+      box-shadow: 0 24px 80px #000a
+    }
+
+    dialog::backdrop {
+      background: #0009;
+      backdrop-filter: blur(3px)
+    }
+
+    .dialog-card {
+      padding: 24px
+    }
+
+    .dialog-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 17px;
+      font-weight: 500
+    }
+
+    .dialog-badge {
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: #ff7a1718;
+      color: #ff9a50
+    }
+
+    .dialog-badge svg {
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round
+    }
+
+    .dialog-message {
+      margin: 16px 0;
+      color: #d2d3d7;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere
+    }
+
+    .dialog-answer {
+      display: block;
+      width: 100%;
+      min-height: 80px;
+      resize: vertical;
+      padding: 10px 12px;
+      border: 1px solid #3b3d44;
+      border-radius: 9px;
+      background: #0d0e10;
+      color: #fff;
+      font: 14px Inter, sans-serif
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 9px;
+      margin-top: 20px
+    }
+
+    .assistant {
+      font-family: Manrope, "Segoe UI", sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      letter-spacing: -.12px
+    }
+
+    .assistant p {
+      margin: 0 0 12px
+    }
+
+    .assistant p:last-child {
+      margin-bottom: 0
+    }
+
+    .assistant ul,
+    .assistant ol {
+      margin: 0 0 12px;
+      padding-left: 22px
+    }
+
+    .assistant li {
+      padding: 2px 0
+    }
+
+    .assistant strong {
+      font-weight: 700;
+      color: #fff
+    }
+
+    .assistant em {
+      color: #e6e7ea
+    }
+
+    .assistant code {
+      font: 13px "Cascadia Code", Consolas, monospace;
+      color: #ffbd91;
+      background: #202227;
+      padding: 2px 5px;
+      border-radius: 5px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <aside class="sb">
+      <div class="brand">TARZ <span style="color:#ff7a17">·</span></div>
+      <a class="nav active" href="chat.html"><svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.5-4A7.5 7.5 0 1 1 20 11.5Z" />
+        </svg>Chat</a>
+      <a class="nav" href="voice.html"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
+          <path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z" />
+        </svg>Settings</a>
+    </aside>
+    <main class="main">
+      <div class="glow"></div>
+      <header class="top">
+        <h1>Chat</h1><button id="new-chat" class="btn2" type="button"><span aria-hidden="true">＋</span> New
+          chat</button>
+      </header>
+      <section class="chat">
+        <div id="messages" class="messages" aria-live="polite">
+          <div id="welcome" class="welcome"><small>// TARZ IS READY</small>
+            <h2>What should I do?</h2>
+            <div>Type a message, or use speech input.</div>
+          </div>
+        </div>
+        <form id="composer" class="composer"><label for="message"
+            style="position:absolute;left:-9999px">Message</label><textarea id="message"
+            placeholder="Ask TARZ anything…" rows="2"></textarea>
+          <div class="composer-foot">
+            <div class="composer-tools">
+              <button id="listen" class="icon-btn" type="button" aria-label="Transcribe speech"
+                title="Speech to text"><svg viewBox="0 0 24 24">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                </svg></button>
+              <button id="tts-toggle" class="icon-btn" type="button" aria-label="Toggle voice replies"
+                title="Voice replies"><svg viewBox="0 0 24 24">
+                  <path d="M3 10v4h4l5 4V6l-5 4H3zM16 9a5 5 0 010 6M18.5 6.5a9 9 0 010 11" />
+                </svg></button>
+              <a class="btn2" href="voice.html"><svg class="nav-icon" style="width:15px;height:15px;vertical-align:-3px"
+                  viewBox="0 0 24 24"><path d="M4 7h16M7 12h10m-7 5h4"/><circle cx="8" cy="7" r="2"/><circle cx="15" cy="12" r="2"/></svg> Speech options</a>
+            </div>
+            <button id="send" class="send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24">
+                <path d="M12 19V5m-7 7 7-7 7 7" />
+              </svg></button>
+          </div>
+        </form>
+        <div id="status" class="status" role="status"></div>
+      </section>
+    </main>
+  </div>
+  <script>
+    (() => {
+      const form = document.getElementById('composer'), input = document.getElementById('message'), send = document.getElementById('send'), listen = document.getElementById('listen'), tts = document.getElementById('tts-toggle'), messages = document.getElementById('messages'), welcome = document.getElementById('welcome'), status = document.getElementById('status'); let settings = { tts_provider: 'groq', tts_enabled: false }, activeQuestion = null, currentPendingBubble = null, questionAsked = false; const stop = document.createElement('button'); stop.type = 'button'; stop.className = 'send'; stop.setAttribute('aria-label', 'Stop TARZ'); stop.title = 'Stop TARZ (Ctrl+Shift+Space)'; stop.hidden = true; stop.style.display = 'none'; stop.style.background = '#ef4444'; stop.innerHTML = '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'; send.parentElement.insertBefore(stop, send);
+      function api() { if (!window.pywebview?.api) throw new Error('Launch TARZ with launch-v3-ui.bat to use chat and speech.'); return window.pywebview.api }
+      function inlineText(parent, text) { const token = /\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\*([^*]+)\*|_([^_]+)_/g; let last = 0, match; while ((match = token.exec(text))) { if (match.index > last) parent.append(document.createTextNode(text.slice(last, match.index))); const strong = match[1] || match[2], code = match[3], em = match[4] || match[5], node = document.createElement(strong ? 'strong' : code ? 'code' : em ? 'em' : 'span'); node.textContent = strong || code || em; parent.append(node); last = token.lastIndex } if (last < text.length) parent.append(document.createTextNode(text.slice(last))) }
+      function formatAssistant(element, text) { const blocks = text.trim().split(/\n\s*\n/).filter(Boolean); for (const block of blocks) { const lines = block.split('\n'), isBullet = lines.every(line => /^\s*[-*]\s+/.test(line)), isNumbered = lines.every(line => /^\s*\d+[.)]\s+/.test(line)); if (isBullet || isNumbered) { const list = document.createElement(isBullet ? 'ul' : 'ol'); for (const line of lines) { const item = document.createElement('li'); inlineText(item, line.replace(/^\s*(?:[-*]|\d+[.)])\s+/, '')); list.append(item) } element.append(list) } else { const paragraph = document.createElement('p'); lines.forEach((line, index) => { if (index) paragraph.append(document.createElement('br')); inlineText(paragraph, line) }); element.append(paragraph) } } }
+      function setAssistantText(el, text) { el.replaceChildren(); formatAssistant(el, String(text)) }
+      function bubble(role, text) { welcome.hidden = true; const el = document.createElement('div'); el.className = 'bubble ' + role; if (role === 'assistant') setAssistantText(el, text); else el.textContent = text; messages.append(el); messages.scrollTop = messages.scrollHeight; return el }
+      async function load() { try { settings = await api().get_voice_settings(); tts.classList.toggle('active', settings.tts_enabled && settings.tts_provider !== 'off'); listen.disabled = !!settings.background_listening; listen.title = settings.background_listening ? 'Turn off background listening in Speech options to use manual transcription.' : 'Speech to text'; if (settings.background_listening) status.textContent = 'Background listening is on. Say “hey” to start a voice turn.' } catch (e) { status.textContent = e.message } }
+      form.addEventListener('submit', async e => { e.preventDefault(); const text = input.value.trim(); if (!text) return; if (activeQuestion) { const question = activeQuestion; bubble('user', text); input.value = ''; input.disabled = true; send.disabled = true; status.textContent = 'Sending your reply...'; try { const result = await api().answer_question(question.id, text); if (!result.ok) throw new Error(result.error || 'Could not send your reply.'); if (activeQuestion && activeQuestion.id === question.id) activeQuestion = null; status.textContent = 'Continuing TARZ’s task...' } catch (err) { input.disabled = false; send.disabled = false; status.textContent = err.message || String(err); input.focus() } return } try { const a = api(); bubble('user', text); input.value = ''; input.disabled = true; send.disabled = true; send.hidden = true; send.style.display = 'none'; stop.hidden = false; stop.style.display = 'grid'; stop.disabled = false; status.textContent = ''; const pending = bubble('assistant', 'Thinking...'); currentPendingBubble = pending; questionAsked = false; const result = await a.send_message(text); const finalText = result.ok ? result.reply : (result.error || 'TARZ could not answer.'); if (questionAsked) bubble('assistant', finalText); else setAssistantText(pending, finalText); currentPendingBubble = null; questionAsked = false } catch (err) { status.textContent = err.message || String(err) } finally { input.disabled = false; send.disabled = false; send.hidden = false; send.style.display = 'grid'; stop.hidden = true; stop.style.display = 'none'; stop.disabled = false; input.focus(); messages.scrollTop = messages.scrollHeight } });
+      stop.addEventListener('click', async () => { stop.disabled = true; if (activeQuestion) { activeQuestion = null; input.disabled = true; send.disabled = true; send.hidden = true; send.style.display = 'none' } status.textContent = 'Stopping TARZ...'; try { const result = await api().stop_current_task(); if (!result.ok) status.textContent = result.message } catch (err) { status.textContent = err.message || String(err) } });
+      input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit() } });
+      document.getElementById('new-chat').addEventListener('click', async () => { try { await api().new_chat(); messages.querySelectorAll('.bubble').forEach(x => x.remove()); welcome.hidden = false; status.textContent = ''; input.focus() } catch (e) { status.textContent = e.message } });
+      listen.addEventListener('click', async () => { listen.disabled = true; status.textContent = 'Listening…'; try { const result = await api().listen_once(); if (result.ok) { input.value = [input.value.trim(), result.text].filter(Boolean).join(' '); input.focus(); status.textContent = 'Speech transcribed.' } else status.textContent = result.error || 'No speech recognized.' } catch (e) { status.textContent = e.message || String(e) } finally { listen.disabled = !!settings.background_listening } });
+      tts.addEventListener('click', async () => { try { if (settings.tts_provider === 'off') { status.textContent = 'Choose a voice in Speech options first.'; return } settings.tts_enabled = !settings.tts_enabled; const result = await api().save_voice_settings(settings); if (!result.ok) throw new Error(result.error); settings = result.settings; tts.classList.toggle('active', settings.tts_enabled); status.textContent = settings.tts_enabled ? 'Voice replies on.' : 'Voice replies off.' } catch (e) { status.textContent = e.message || String(e) } });
+      async function poll() { if (!window.pywebview?.api) return; try { const result = await api().get_events(); for (const event of result.events || []) { if (event.user) { bubble('user', event.user); messages.scrollTop = messages.scrollHeight } if (event.assistant) { bubble('assistant', event.assistant); messages.scrollTop = messages.scrollHeight } if (event.reply) { bubble('assistant', event.reply); messages.scrollTop = messages.scrollHeight } if (event.question) { activeQuestion = event.question; questionAsked = true; if (currentPendingBubble) { setAssistantText(currentPendingBubble, event.question.text); currentPendingBubble = null } else bubble('assistant', event.question.text); input.disabled = false; send.disabled = false; send.hidden = false; send.style.display = 'grid'; status.textContent = 'Reply in the message box to continue.'; input.focus() } if (event.error) status.textContent = event.error } } catch (e) { } }
+      window.addEventListener('pywebviewready', load); load(); setInterval(poll, 700)
+    })();
+  </script>
+</body>
+
+</html>
