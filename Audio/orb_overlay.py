@@ -590,10 +590,41 @@ class OrbOverlay:
 
 
 _orb: OrbOverlay | None = None
+_EXTERNAL_DOCK = False
 
 
-def get_orb() -> OrbOverlay:
+class _ExternalDockOrb:
+    """Disable the legacy voice capsule when the persistent UI dock owns voice visuals."""
+
+    def show(self): pass
+    def hide(self): pass
+    def set_state(self, _state: str): pass
+    def update_level(self, _level: float): pass
+    def update_caption(self, _text: str): pass
+
+    def show_notification(self, *args, **kwargs):
+        return _get_native_orb().show_notification(*args, **kwargs)
+
+    def close_notification(self, *args, **kwargs):
+        if _orb is not None:
+            return _orb.close_notification(*args, **kwargs)
+
+
+_external_dock_orb = _ExternalDockOrb()
+
+
+def use_external_dock(enabled: bool = True):
+    """Use a separate persistent dock for voice visuals; approval popups still work."""
+    global _EXTERNAL_DOCK
+    _EXTERNAL_DOCK = bool(enabled)
+
+
+def _get_native_orb() -> OrbOverlay:
     global _orb
     if _orb is None:
         _orb = OrbOverlay()
     return _orb
+
+
+def get_orb() -> OrbOverlay:
+    return _external_dock_orb if _EXTERNAL_DOCK else _get_native_orb()
