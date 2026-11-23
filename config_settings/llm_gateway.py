@@ -235,17 +235,34 @@ class LLMGateway:
         return [(r[3], r[4]) for r in ready], soonest
 
     def _rotated_models(self, models: Sequence[str]) -> tuple[str, ...]:
-        """Start each route at its next preferred model, leaving fallback order intact."""
+        """Keep NVIDIA primary when configured; rotate fallback models after it.
+
+        Other routes rotate their whole model pool. NVIDIA-enabled routes always
+        try NVIDIA first, then rotate the fallback order if it is unavailable.
+        """
         names = tuple(models)
         if len(names) < 2:
             return names
+        has_nvidia_primary = names[0].endswith("_nvidia")
+        rotating = names[1:] if has_nvidia_primary else names
         with self._lock:
             start = self._model_cursors.get(names, 0) % len(names)
+        if has_nvidia_primary:
+            start %= len(rotating)
+            return (names[0], *rotating[start:], *rotating[:start])
+        with self._lock:
             self._model_cursors[names] = (start + 1) % len(names)
         return names[start:] + names[:start]
 
     def _advance_after_model(self, models: tuple[str, ...], name: str) -> None:
         if len(models) < 2:
+            return
+        if models[0].endswith("_nvidia"):
+            fallbacks = models[1:]
+            if name == models[0] or not fallbacks:
+                return
+            with self._lock:
+                self._model_cursors[models] = (fallbacks.index(name) + 1) % len(fallbacks)
             return
         with self._lock:
             self._model_cursors[models] = (models.index(name) + 1) % len(models)
@@ -353,6 +370,9 @@ class LLMGateway:
                 if isinstance(usage, dict) and usage.get("total_tokens"):
                     entry[1] = int(usage["total_tokens"])
                 self._advance_after_model(route_models, name)
+                if any(model.endswith("_nvidia") for model in route_models):
+                    print(f"[llm] selected model={name} provider={provider} key=#{index} "
+                          f"latency={self._clock() - started:.2f}s")
                 log.info("model=%s key=#%d tokens=%s latency=%.2fs",
                          name, index, entry[1], self._clock() - started)
                 return True, result, True, None
