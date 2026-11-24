@@ -1,14 +1,14 @@
 """
-agent.py - autonomous computer-use TOOL (fallback when no dedicated tool can do the job)
+autonomous_agent.py - autonomous computer-use TOOL (fallback when no dedicated tool can do the job)
 
 As a tool inside your system:
-    from agent import computer_agent, TOOL_SPEC
+    from Tools.Autonomous_layer.autonomous_agent import computer_agent
     result = computer_agent("search mrbeast on youtube and play his latest video")
     # -> {"status": "success|failed|needs_input|aborted", "summary": "...", "question": "...", ...}
 
 From the command line:
-    python agent.py "open spotify and play Gigi Perez"
-    python agent.py "download the spotify installer" --file spotify
+    python Tools/Autonomous_layer/autonomous_agent.py "open spotify and play Gigi Perez"
+    python Tools/Autonomous_layer/autonomous_agent.py "download the spotify installer" --file spotify
 
 pip install groq pyautogui pyperclip python-dotenv pywin32
 set GROQ_API_KEY=...
@@ -49,35 +49,34 @@ How it behaves like a person:
 import sys
 from pathlib import Path
 
-# add the project root (parent of this file's folder) to the import path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa
-
-from langchain_core.tools import tool
-from Tools.Autonomous_layer.screen_layer import open_app, wait, expose, compact, read_text, move_to, El, try_to_expose_data
-from config_settings.config import CLASSIFY_LLMS, VISION_LLMS
-from config_settings.llm_gateway import get_gateway, AllModelsFailed
-from dotenv import load_dotenv
-import pyperclip
-import pyautogui
-import os
-import sys
-import io
-import json
-import base64
-import time
-import re
-import argparse
-import threading
-import contextvars
-import subprocess
-import webbrowser
-from urllib.parse import urlparse
-from copy import copy
-from dataclasses import dataclass, field
-from typing import Callable, Optional
-from langsmith import traceable
+# Project root (parent of Tools/) so this file can be launched directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # noqa
 from langsmith.run_helpers import get_current_run_tree
+from langsmith import traceable
+from typing import Callable, Optional
+from dataclasses import dataclass, field
+from copy import copy
+from urllib.parse import urlparse
+import webbrowser
+import subprocess
+import contextvars
+import threading
+import argparse
+import re
+import time
+import base64
+import json
+import io
+import os
+import pyautogui
+import pyperclip
 from dotenv import load_dotenv
+from config_settings.llm_gateway import get_gateway, AllModelsFailed
+from config_settings.config import CLASSIFY_LLMS, VISION_LLMS
+from Tools.Autonomous_layer.screen_layer import open_app, expose, compact, read_text, move_to, El, try_to_expose_data
+from langchain_core.tools import tool
+
+
 load_dotenv()
 
 # --------------------------------------------------------------------------
@@ -163,12 +162,6 @@ def _com_init() -> None:
 _com_init()
 
 
-# project root (the folder that holds config_settings/ and Tools/) must be importable
-sys.path.insert(0, os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..")))
-
-
-load_dotenv()
 pyautogui.PAUSE = 0.02          # default is 0.1s after EVERY pyautogui call
 
 # priority list; the gateway rotates keys + falls back
@@ -195,6 +188,31 @@ CHAIN_KEYS = {"down", "tab", "enter"}
 
 # the code handles the Save As dialog ONLY for download tasks (set in run_task)
 AUTO_SAVE = False
+
+# A step that STARTS with open/navigate (used to skip the useless first screen read).
+_OPEN_GOAL = re.compile(
+    r"^\s*(open|launch|start|go to|navigate|visit|load)\b", re.I)
+# A step whose ONLY goal is entering a query can be verified from the window title.
+_SEARCH_GOAL = re.compile(
+    r"^\s*(search|find|look up|type|enter|query)\b", re.I)
+# If the goal also asks for one of these, the title only proves the first half.
+_MORE_THAN_NAV = re.compile(
+    r"\b(and|then|play|click|select|choose|download|save|send|post|buy|book)\b", re.I)
+# generic words that are in many window titles; the app's distinctive word is a better token
+_APP_STOPWORDS = {"the", "microsoft", "google", "windows", "app", "application",
+                  "media", "player", "browser", "desktop"}
+
+
+def _app_token(name: str) -> str:
+    """The word that should appear in the app's window title ('VLC media player' -> 'vlc')."""
+    words = [w for w in re.findall(r"\w{3,}", (name or "").lower())
+             if w not in _APP_STOPWORDS]
+    return max(words, key=len) if words else ""
+
+
+def _lone(goal: str, pattern: re.Pattern) -> bool:
+    """True only when the step asks for the navigation/search and nothing after it."""
+    return bool(pattern.match(goal or "")) and not _MORE_THAN_NAV.search(goal or "")
 
 
 def chainable(x: dict, by_id: dict, prev: Optional[dict]) -> bool:
@@ -283,26 +301,6 @@ def settle(a: dict, note: str) -> float:
             break
     return time.time() - t0
 
-
-# --------------------------------------------------------------------------
-# How the host system (your orchestrator) should expose this tool to its LLM
-# --------------------------------------------------------------------------
-TOOL_SPEC = {
-    "name": "computer_agent",
-    "description": ("Autonomous agent that operates the real Windows desktop and web browser like a human "
-                    "(sees the screen, clicks, types, scrolls, downloads). Use it ONLY when no dedicated "
-                    "tool can do the job. Give a clear goal in plain language. Returns status "
-                    "success / failed / needs_input (it needs an answer from the user) / aborted."),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "task": {"type": "string", "description": "What the user wants done, in plain language."},
-            "file_hint": {"type": "string",
-                          "description": "Optional: part of the file name if the task downloads a file."},
-        },
-        "required": ["task"],
-    },
-}
 
 PLAN_SYSTEM = """You plan Windows desktop and web tasks. Break the task into 2-6 short, concrete steps.
 Rules:
@@ -396,8 +394,7 @@ How to work:
 - Irreversible actions (send, delete, pay, buy, post, publish, uninstall...) only when the task clearly
   asks for them. Otherwise ask_user first.
 - step_done needs "evidence": an exact label or window title that is on screen NOW and proves the
-  CURRENT step is complete. After step_done a vision check looks at a screenshot. If it says the step
-  is not done you get a short reason: fix what is missing, do NOT repeat the same action.
+  CURRENT step is complete. The code checks it; made-up evidence is rejected.
 - The window title may not contain the app name (e.g. Spotify shows the song). Any visible label is fine evidence.
 - SAVING A FILE (Notepad, Word, any app): press ctrl+s. A Save As dialog opens with the File name box
   already focused. Then use {"action":"type","text":"%USERPROFILE%/Documents/poem.txt","submit":true}
@@ -480,8 +477,8 @@ def check_limits(ctx: Ctx) -> None:
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
-# tokens of the last call + seconds lost to rate limits
-LLM_STATS = {"in": 0, "out": 0, "rl": 0.0}
+# tokens of the last call
+LLM_STATS = {"in": 0, "out": 0}
 
 
 def _msg_text(r) -> str:
@@ -492,16 +489,15 @@ def _msg_text(r) -> str:
 
 
 def _parse_json(text: str):
-    """First JSON object in the text, else a JSON array wrapped as {"steps": [...]}. None if neither parses."""
-    text = (text or "").replace("```json", "```")
-    for pat in (r"\{.*\}", r"\[.*\]"):
-        m = re.search(pat, text, re.S)
-        if not m:
+    """First JSON value in the text: an object as-is, or an array wrapped as {"steps": [...]}."""
+    for i, ch in enumerate(text or ""):
+        if ch not in "{[":
             continue
         try:
-            obj = json.loads(m.group(0))
-        except Exception:
-            continue
+            obj, _ = json.JSONDecoder().raw_decode(text, i)
+        except ValueError:
+            continue                         # this brace was not JSON; try the next one
+        # '{' decodes to an object, '[' to a list (plan steps)
         return obj if isinstance(obj, dict) else {"steps": obj}
     return None
 
@@ -516,7 +512,7 @@ def llm(system: str, user: str, effort: str = "medium") -> dict:
     gw = get_gateway()
     messages = [SystemMessage(content=system), HumanMessage(content=user)]
     est = (len(system) + len(user)) // 4 + AGENT_MAX_TOKENS // 2
-    LLM_STATS.update({"in": 0, "out": 0, "rl": 0.0})
+    LLM_STATS.update({"in": 0, "out": 0})
 
     def call(name, settings, key):
         kw = {}
@@ -530,9 +526,9 @@ def llm(system: str, user: str, effort: str = "medium") -> dict:
         try:
             r = gw.run(AGENT_LLMS, call, est_tokens=est)
         except AllModelsFailed as e:
+            # the gateway already rotated every key/model and waited for a free one
             print(f"   [llm] all models/keys failed: {str(e)[:300]}")
-            time.sleep(3)
-            continue
+            return {}
         u = getattr(r, "usage_metadata", None) or {}
         LLM_STATS["in"], LLM_STATS["out"] = u.get(
             "input_tokens", 0), u.get("output_tokens", 0)
@@ -637,16 +633,7 @@ def focus_browser(h) -> None:
         return
     if win32gui.IsIconic(h):
         win32gui.ShowWindow(h, win32con.SW_RESTORE)
-    try:
-        win32gui.SetForegroundWindow(h)
-    except Exception:
-        try:
-            import win32com.client                   # alt-key tap lets us take the foreground
-            win32com.client.Dispatch("WScript.Shell").SendKeys("%")
-            win32gui.SetForegroundWindow(h)
-        except Exception:
-            pass
-    time.sleep(0.2)
+    _focus_hwnd(h)
 
 
 @_trace("open_url")
@@ -760,6 +747,7 @@ def observe(task: str):
     """-> (window title, ALL raw elements, list shown to the model, thin)
     Browser in front -> read just the page (retrying while Chromium's lazy tree is still empty).
     Anything else -> the generic screen_layer read."""
+    global BROWSER_MODE
     for attempt in range(6):
         h = browser_hwnd() if BROWSER_MODE else None
         if h:
@@ -767,6 +755,8 @@ def observe(task: str):
         else:
             h = front_browser_hwnd()
         if not h:
+            # the browser is gone: stop treating scrolls as page scrolls
+            BROWSER_MODE = False
             break
         title, raw, shown, thin = observe_browser(h, task)
         if not thin:
@@ -801,56 +791,6 @@ def fmt(title: str, shown: list, extra: dict) -> str:
     return f"Window: {title!r}\nElements:\n" + "\n".join(lines)
 
 
-VISION_SYSTEM = """You check ONE step of a computer task by looking at a screenshot.
-Reply with JSON only: {"done": true|false, "reason": "<max 12 words>"}
-done=true only if the screenshot clearly shows the step is finished. Judge only what you can see.
-If not finished, say what is missing."""
-VISION_MAX_TOKENS = 120
-# vision says "not done" this many times in one step -> the step fails
-MAX_VISION_NO = 3
-
-
-def _screenshot_b64() -> str:
-    img = pyautogui.screenshot()
-    img.thumbnail((1280, 1280))
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, "JPEG", quality=70)
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-@_trace("vision_verify", "llm", process_inputs=lambda d: {"goal": d.get("goal"), "recent": d.get("recent")})
-def vision_check(goal: str, task: str, recent: str = ""):
-    """Screenshot -> cheap Groq vision model -> (done, short reason). None if the check could not run."""
-    from langchain_core.messages import SystemMessage, HumanMessage
-    try:
-        b64 = _screenshot_b64()
-        gw = get_gateway()
-        messages = [SystemMessage(content=VISION_SYSTEM), HumanMessage(content=[
-            {"type": "text", "text": f"TASK: {task}\nSTEP: {goal}\nLAST ACTIONS: {recent or '(none)'}\n"
-                                     "Is this step finished?"},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}])]
-
-        def call(name, settings, key):
-            kw = {}
-            if settings["provider"] == "groq":
-                kw["max_tokens"] = VISION_MAX_TOKENS
-            return gw.client(name, key).invoke(messages, **kw)
-
-        r = gw.run(VISION_LLMS, call, est_tokens=1500)
-    except AllModelsFailed as e:
-        print(f"   [vision] all models/keys failed: {str(e)[:200]}")
-        return None
-    except Exception as ex:
-        print(f"   [vision] check failed: {ex}")
-        return None
-    obj = _parse_json(_msg_text(r))
-    if not obj or "done" not in obj:
-        print(f"   [vision] unusable reply: {_msg_text(r)[:150]!r}")
-        return None
-    done = obj["done"] is True or str(obj["done"]).strip().lower() == "true"
-    return done, str(obj.get("reason", ""))[:120]
-
-
 @_trace("evidence_ok", "chain",
         process_inputs=lambda d: {"evidence": d.get("ev"), "title": d.get("title"), "n_raw": len(d.get("raw") or [])})
 def evidence_ok(ev: str, title: str, raw: list) -> bool:
@@ -878,6 +818,8 @@ def paste(text: str) -> None:
 # --------------------------------------------------------------------------
 RISKY = re.compile(r"\b(delete|remove|erase|send|pay|buy|purchase|place order|checkout|uninstall|"
                    r"format|publish|post|transfer|unsubscribe|sign out|log out)\b", re.I)
+SECRET = re.compile(
+    r"password|passcode|\bpin\b|otp|cvv|card number|security code", re.I)
 
 
 @_trace("guard", "chain",
@@ -922,8 +864,13 @@ class Downloads:
 
     def _scan(self) -> dict:
         try:
-            return {e.name: (e.stat().st_size, e.stat().st_mtime_ns)
-                    for e in os.scandir(self.folder) if e.is_file()}
+            with os.scandir(self.folder) as entries:
+                files = {}
+                for e in entries:
+                    if e.is_file():
+                        st = e.stat()
+                        files[e.name] = (st.st_size, st.st_mtime_ns)
+                return files
         except OSError:                              # folder missing / unreadable: treat as empty
             return {}
 
@@ -941,8 +888,14 @@ class Downloads:
         return sorted(done), sorted(partial)
 
     def describe(self, names: list[str]) -> str:
-        return ", ".join(f"{os.path.join(self.folder, n)} "
-                         f"({os.path.getsize(os.path.join(self.folder, n)):,} bytes)" for n in names)
+        parts = []
+        for name in names:
+            path = os.path.join(self.folder, name)
+            try:
+                parts.append(f"{path} ({os.path.getsize(path):,} bytes)")
+            except OSError:
+                parts.append(path)
+        return ", ".join(parts)
 
 
 def dialog_hwnd():
@@ -1061,10 +1014,11 @@ def _save_via_uia(d, folder: str) -> bool:
 @_trace("save_via_keys")
 def _save_via_keys(folder: str) -> bool:
     """Keyboard route: jump to File name, prefix the folder, Enter."""
+    if not folder or not folder.isascii():
+        return False                                 # pyautogui.write cannot type this path
     pyautogui.hotkey("alt", "n")
     pyautogui.press("home")
-    if folder.isascii():
-        pyautogui.write(folder + "\\", interval=0.01)
+    pyautogui.write(folder + "\\", interval=0.01)
     pyautogui.press("enter")
     return True
 
@@ -1072,7 +1026,7 @@ def _save_via_keys(folder: str) -> bool:
 @_trace("dismiss_save_dialog",
         process_inputs=lambda d: {"hwnd": d.get("d"), "title": d.get("title"),
                                   "folder": d.get("folder"), "attempt": d.get("attempt")})
-def _dismiss_save_dialog(d, title: str, folder: str, attempt: int) -> bool:
+def _dismiss_save_dialog(d, title: str, folder: str, attempt: int) -> None:
     """The actual work on a dialog that is open: focus it, then try the routes until it closes.
     (Split out of handle_save_dialog so that only REAL dialog handling shows up in traces, not the
     'is there a dialog?' polling that runs every loop iteration.)"""
@@ -1083,7 +1037,7 @@ def _dismiss_save_dialog(d, title: str, folder: str, attempt: int) -> bool:
         pyautogui.press("y")
         print(
             f"   [dialog] {'closed OK' if _dialog_gone(d, 1.5) else 'STILL OPEN'} (confirm)")
-        return True
+        return
     routes = (("win32", lambda: _save_via_win32(d, folder)),
               ("uia", lambda: _save_via_uia(d, folder)),
               ("keyboard", lambda: _save_via_keys(folder)),
@@ -1096,11 +1050,10 @@ def _dismiss_save_dialog(d, title: str, folder: str, attempt: int) -> bool:
             continue
         if ok and _dialog_gone(d, 2.5):
             print(f"   [dialog] closed OK via {name}")
-            return True
+            return
         print(
             f"   [dialog] {name} route did not close it, trying the next one")
     print("   [dialog] STILL OPEN after all routes")
-    return True
 
 
 def handle_save_dialog() -> bool:
@@ -1112,12 +1065,10 @@ def handle_save_dialog() -> bool:
     import win32gui
     if not AUTO_SAVE:
         return False
-    if not dialog_hwnd():
-        return False
     with _DIALOG_LOCK:
         d = dialog_hwnd()
         if not d:
-            return True                              # the other thread just handled it
+            return False
         tries = _ATTEMPTS.get(d, 0)
         if tries >= 3:
             if tries == 3:
@@ -1127,7 +1078,8 @@ def handle_save_dialog() -> bool:
             return True
         _ATTEMPTS[d] = tries + 1
         title, folder = win32gui.GetWindowText(d), downloads_dir()
-        return _dismiss_save_dialog(d, title, folder, tries + 1)
+        _dismiss_save_dialog(d, title, folder, tries + 1)
+        return True
 
 
 class DialogWatcher(threading.Thread):
@@ -1150,36 +1102,10 @@ class DialogWatcher(threading.Thread):
         _com_init()
         while not self.stop_flag.is_set():
             try:
-                if dialog_hwnd():
-                    handle_save_dialog()
+                handle_save_dialog()
             except Exception as ex:
                 print(f"   [dialog] watcher error: {ex}")
             self.stop_flag.wait(0.4)
-
-
-DOWNLOADISH = re.compile(
-    r"download|save|install|setup|get |keep|continue|start", re.I)
-
-
-@_trace("watch_save_dialog",
-        process_inputs=lambda d: {"seconds": d.get("seconds"), "title_before": d.get("title_before")})
-def watch_save_dialog(ctx: "Ctx", seconds: float = 4.0, title_before: Optional[str] = None) -> bool:
-    """Right after a download-looking click the Save As dialog needs a moment to appear.
-    Watch for it here and handle it immediately, so the agent never types into a modal window."""
-    t0 = time.time()
-    while time.time() - t0 < seconds:
-        check_limits(ctx)
-        if handle_save_dialog():
-            return True
-        if title_before is not None and _front_title() != title_before:
-            # the click opened another page: no dialog is coming
-            return False
-        if ctx.dl:
-            done, partial = ctx.dl.check()
-            if done or partial:                      # the file is already arriving, no dialog this time
-                return False
-        time.sleep(0.25)
-    return False
 
 
 # --------------------------------------------------------------------------
@@ -1213,7 +1139,7 @@ def plan(task: str, done: list[str] | None = None, screen: str = "",
         user += f"CURRENT SCREEN:\n{screen}\n"
     user += "Return the remaining steps as JSON."
     steps = llm(PLAN_SYSTEM, user, "low").get("steps") or []
-    steps = [str(x) for x in steps][:8]
+    steps = [str(x) for x in steps][:6]
     # keep a lone "open brave" task, drop the filler step otherwise
     if len(steps) > 1:
         steps = [s for s in steps if not _OPEN_BROWSER.match(s)] or steps
@@ -1371,6 +1297,9 @@ def act(a: dict, by_id: dict, raw: list, extra: dict, typed: dict, ctx: Ctx) -> 
         e = by_id.get(a.get("id"))
         if not e:
             return f'FAILED: no element with id {a.get("id")} in the current list'
+        if kind == "type_into" and SECRET.search(e.name or ""):
+            return ('BLOCKED: that looks like a password/payment field. Never type secrets; '
+                    "use ask_user and let the user enter it themselves.")
         if kind == "type_into" and e.role not in ("Edit", "ComboBox", "Document", "Vision"):
             return (f'FAILED: [{e.id}] "{e.name}" is a {e.role}, not a text field. '
                     "Pick the Edit/ComboBox input box, or focus the search box with the keyboard (/ or ctrl+k).")
@@ -1467,29 +1396,9 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
     pending_query = ""
     plan_txt = "\n".join(
         f'{"->" if k == i else "  "} {k + 1}. {s}' for k, s in enumerate(steps))
-    vision_no = 0
-
-    def screen_ok(label: str):
-        """Vision check of the current screen. True / False, or None if the check could not run.
-        On False the short reason goes into the history, so the main model sees it."""
-        nonlocal vision_no
-        res = vision_check(goal, ctx.task, " | ".join(
-            h[0][:100] for h in history[-2:]))
-        if res is None:
-            return None
-        ok, why = res
-        print(f"      [vision] {'DONE' if ok else 'NOT done'}: {why}")
-        if not ok:
-            vision_no += 1
-            history.append(
-                [f'{n}. {label} REJECTED by screen check: {why}', False])
-            emit(ctx, event="vision_rejected", step=i + 1, reason=why)
-        return ok
 
     for n in range(1, MAX_ACTIONS_PER_STEP + 1):
         check_limits(ctx)
-        if vision_no >= MAX_VISION_NO:
-            return False, f"screen check said not done {MAX_VISION_NO} times"
         # dialogs + disk truth are handled by code, before the model sees anything
         for _ in range(3):
             if not handle_save_dialog():
@@ -1505,20 +1414,19 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
             if done:
                 raise Finished(dl.describe(done))
 
-        if (nav_app and re.match(r"\s*(open|launch|start)\b", goal, re.I)
-                and not re.search(r"\b(and|then|navigate|search|play|type|click)\b", goal, re.I)):
-            words = re.findall(r"\w{3,}", nav_app)
+        if nav_app and _lone(goal, _OPEN_GOAL):
+            token = _app_token(nav_app)
             t_w0, shown_title = time.time(), ""
             while time.time() - t_w0 < APP_WAIT:     # the app needs a moment to show its window
                 check_limits(ctx)
                 cur = _front_title()
-                if words and any(w in cur.lower() for w in words):
+                if token and token in cur.lower():
                     shown_title = cur
                     break
                 time.sleep(0.4)
             # only try once; otherwise fall back to the normal read
             nav_app = ""
-            if shown_title and screen_ok("open app") is not False:
+            if shown_title:
                 emit(ctx, event="verified", step=i + 1, goal=goal,
                      evidence=shown_title, window=shown_title)
                 ctx.obs_cache = None
@@ -1528,9 +1436,10 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
         if n == 1 and ctx.obs_cache is not None:     # nothing happened since the last step ended: reuse that read
             title, raw, shown, thin = ctx.obs_cache
         elif (n == 1 and i == 0 and not BROWSER_MODE and not history
-              and re.match(r"\s*(open|launch|start|go to|navigate|visit)\b", goal, re.I)):
+              and _OPEN_GOAL.match(goal)):
             # nothing to read before the app / site is open and the model's move is open_app / open_url anyway:
-            # skip the screen read (it would end in the ~60-70s Moondream vision fallback)
+            # skip the screen read (it would end in the ~60-70s Moondream vision fallback).
+            # NOTE: plain match on purpose - "Open X's download page" must skip too (_lone would say no).
             title, raw, shown, thin = _front_title(), [], [], False
             print(
                 "   [observe] first step is 'open ...': nothing to read yet, skipping the screen read")
@@ -1553,12 +1462,11 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
         # an "open <site>" step is verified by CODE: the window title now shows the site name
         nav_line = ""
         if nav_brand:
-            if nav_brand in title.lower() and re.match(r"\s*(open|go to|navigate|visit|load|launch)\b", goal, re.I):
-                if screen_ok("open page") is not False:
-                    emit(ctx, event="verified", step=i + 1,
-                         goal=goal, evidence=title, window=title)
-                    ctx.obs_cache = (title, raw, shown, thin)
-                    return True, title
+            if nav_brand in title.lower() and _lone(goal, _OPEN_GOAL):
+                emit(ctx, event="verified", step=i + 1,
+                     goal=goal, evidence=title, window=title)
+                ctx.obs_cache = (title, raw, shown, thin)
+                return True, title
             nav_checks += 1
             if nav_checks <= 2 and nav_brand not in title.lower():
                 nav_line = (f"NAVIGATION: you just opened a page; the window title does not show "
@@ -1566,13 +1474,11 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
 
         # a "type/search a query" step is ALSO verified by CODE: the title now shows the query
         if (pending_query and pending_query in title.lower()
-                and re.search(r"search|type|enter|query", goal, re.I)):
-            if screen_ok("search") is not False:
-                emit(ctx, event="verified", step=i + 1,
-                     goal=goal, evidence=title, window=title)
-                ctx.obs_cache = (title, raw, shown, thin)
-                return True, title
-            pending_query = ""
+                and _lone(goal, _SEARCH_GOAL)):
+            emit(ctx, event="verified", step=i + 1,
+                 goal=goal, evidence=title, window=title)
+            ctx.obs_cache = (title, raw, shown, thin)
+            return True, title
 
         dl_line = nav_line
         if thin:
@@ -1595,25 +1501,24 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
         t_llm = time.time() - t_b
         print(f"   [{i + 1}.{n}] {a}")
         st = LLM_STATS
-        print(f"      [time] read {t_read:.1f}s | model {t_llm:.1f}s ({st['in']} in / {st['out']} out tokens"
-              + (f", {st['rl']:.0f}s of it lost to the Groq rate limit" if st["rl"] else "") + ")")
+        print(
+            f"      [time] read {t_read:.1f}s | model {t_llm:.1f}s ({st['in']} in / {st['out']} out tokens)")
 
         # the model may return several actions for this ONE screen read: cut it to the safe prefix
         by_id = {**{e.id: e for e in shown}, **extra}
         batch = as_batch(a, by_id)
         a = batch[0]
         kind = a.get("action")
+        if not kind:
+            return False, "model reply had no usable action"
 
         if kind == "step_done":
             ev = a.get("evidence", "")
-            seen = screen_ok("step_done")
-            if seen is True or (seen is None and evidence_ok(ev, title, raw)):
+            if evidence_ok(ev, title, raw):
                 emit(ctx, event="verified", step=i + 1,
                      goal=goal, evidence=ev, window=title)
                 ctx.obs_cache = (title, raw, shown, thin)
                 return True, ev
-            if seen is False:
-                continue
             history.append(
                 [f'{n}. step_done REJECTED: "{ev}" is NOT on screen', False])
             emit(ctx, event="evidence_rejected", step=i + 1, evidence=ev)
@@ -1677,11 +1582,6 @@ def run_step(ctx: Ctx, steps: list[str], i: int):
             note = "FAILED (in batch): " + note
         # a / kind now refer to the LAST executed action (the only one that can change the page)
 
-        if ctx.dl and kind in ("click", "double_click") and not note.startswith(("BLOCKED", "FAILED")):
-            tgt = by_id.get(a.get("id"))
-            if tgt and len(tgt.name or "") <= 50 and DOWNLOADISH.search(tgt.name or ""):
-                if watch_save_dialog(ctx, 4.0, title):
-                    note += " | Save As dialog handled by code"
         t_act = time.time() - t_c
         print("      ->", note)
 
@@ -1884,16 +1784,15 @@ def computer_agent(task: str, file_hint: str = "") -> dict:
 
 
 if __name__ == "__main__":
-    while True:
-        ap = argparse.ArgumentParser()
-        ap.add_argument("task", nargs="*")
-        ap.add_argument("--file", default="",
-                        help="part of the expected downloaded file name, e.g. spotify")
-        ap.add_argument("--seconds", type=int, default=300, help="time limit")
-        args = ap.parse_args()
-        t = " ".join(args.task) or input("Task: ")
-        res = run_task(
-            t, args.file, max_seconds=args.seconds,
-            confirm=lambda d: input(f"\n{d} [y/N] ").strip().lower() == "y",
-            ask=lambda q: input(f"\nAgent asks: {q}\n> "))
-        print("\nRESULT:", json.dumps(res, indent=2))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("task", nargs="*")
+    ap.add_argument("--file", default="",
+                    help="part of the expected downloaded file name, e.g. spotify")
+    ap.add_argument("--seconds", type=int, default=300, help="time limit")
+    args = ap.parse_args()
+    t = " ".join(args.task) or input("Task: ")
+    res = run_task(
+        t, args.file, max_seconds=args.seconds,
+        confirm=lambda d: input(f"\n{d} [y/N] ").strip().lower() == "y",
+        ask=lambda q: input(f"\nAgent asks: {q}\n> "))
+    print("\nRESULT:", json.dumps(res, indent=2))
