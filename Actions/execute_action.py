@@ -1,50 +1,15 @@
+import pyperclip
+import time
+import pyautogui
 
-
-print("pyperclip")  # noqa
-import pyperclip  # noqa
-print("trnslt")  # noqa
-from Tools.translator import run_translate  # noqa
-print("os")  # noqa
-import os  # noqa
-print("duck")  # noqa
-from duckduckgo_search import DDGS  # noqa
-print("dot")  # noqa
-print("pil")  # noqa
-from PIL import Image  # noqa
-import time  # noqa
-import base64  # noqa
-print("[Actions] 1 - pyautogui...")  # noqa
-import pyautogui  # noqa
-import time  # noqa
-
-print("[Actions] 2 - get_coordinates...")  # noqa
-from Screen_Postition.get_coordinates import find_on_screen, find_and_click  # noqa
-print("rag")  # noqa
-# noqa
-
-print("[Actions] 3 - vision...")  # noqa
-from Vison.vision import describe_screen  # noqa
-
-print("[Actions] 4 - shortcuts...")  # noqa
-from .app_shortcut import volume_down, volume_up, mute, SHORTCUTS  # noqa
-
-print("[Actions] 5 - weather...")  # noqa
-from Tools.weather import get_weather  # noqa
-
-print("[Actions] 6 - timer...")  # noqa
-from Tools.timer_alarm import run_timer, run_alarm  # noqa
-
-print("[Actions] 7 - translator...")  # noqa
-from Tools.translator import run_translate  # noqa
-
-print("[Actions] 8 - news...")  # noqa
-from Tools.news import search_news   # noqa
-
-print("[Actions] 9 - langchain tools...")  # noqa
-from langchain_core.tools import tool  # noqa
-
-
-print("[Actions] All imports done ✓")  # noqa
+from Screen_Postition.get_coordinates import find_and_click
+from Vison.vision import describe_screen
+from .app_shortcut import volume_down, volume_up, mute, SHORTCUTS
+from Tools.weather import get_weather
+from Tools.timer_alarm import run_timer, run_alarm
+from Tools.translator import run_translate
+from Tools.news import search_news
+from langchain_core.tools import tool
 
 
 @tool
@@ -123,17 +88,6 @@ def open_app(app_name: str) -> str:
 
 
 @tool
-def open_app2(app_name: str) -> str:
-    """Open any application by name."""
-    name = app_name if app_name.lower().endswith(".exe") else f"{app_name}.exe"
-    try:
-        os.startfile(name)
-        return f"Opened {app_name}"
-    except OSError:
-        return f"Couldn't find {app_name}"
-
-
-@tool
 def read_screen(question: str) -> str:
     """Read and describe briefly what is currently visible on screen."""
     return describe_screen(question)
@@ -206,9 +160,3 @@ def wait(seconds: int) -> str:
     """Wait for a number of seconds. Use after opening apps or navigating."""
     time.sleep(seconds)
     return f"Waited {seconds}s"
-
-
-@tool
-def done(summary: str) -> str:
-    """Finish once a tool result or screen state confirms the user's requested outcome."""
-    return f"Done: {summary}"
