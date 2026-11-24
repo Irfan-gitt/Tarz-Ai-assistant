@@ -222,14 +222,9 @@ class LLMGateway:
             eligible_wait = wait if respect else cooldown_wait
             rows.append((eligible_wait, used, self._last_used.get(
                 (provider, key), 0.0), index, key))
-        if respect:
-            ready = [r for r in rows if r[0] <= 0]
-            busy = [r[0] for r in rows if r[0] > 0]
-            soonest = min(busy) if busy else None
-        else:
-            ready = [r for r in rows if r[0] <= 0]
-            busy = [r[0] for r in rows if r[0] > 0]
-            soonest = min(busy) if busy else None
+        ready = [r for r in rows if r[0] <= 0]
+        busy = [r[0] for r in rows if r[0] > 0]
+        soonest = min(busy) if busy else None
         # least tokens used, then least recently used
         ready.sort(key=lambda r: (r[1], r[2]))
         return [(r[3], r[4]) for r in ready], soonest
