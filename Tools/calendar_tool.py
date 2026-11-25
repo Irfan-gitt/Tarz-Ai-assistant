@@ -13,20 +13,18 @@ except ImportError:
     build = None
 
 SCOPES = [
-    'https://www.googleapis.com/auth/gmail.send',
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.modify',
-    'https://www.googleapis.com/auth/calendar',          # added
-    'https://www.googleapis.com/auth/calendar.events',    # added
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/calendar.events',
 ]
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDENTIALS_FILE = os.path.join(
-    os.path.dirname(__file__), "gmail_credentials.json")
-TOKEN_FILE = os.path.join(os.path.dirname(__file__), "gmail_token.pickle")
+    BASE_DIR, "Dedicated_Tools", "gmail_credentials.json")
+TOKEN_FILE = os.path.join(BASE_DIR, "Dedicated_Tools", "calendar_token.pickle")
 
 CALENDAR_NOT_CONFIGURED = (
-    "Calendar is not configured yet. Add Tools/gmail_credentials.json with Calendar API access "
-    "and run a calendar task again to connect your Google account."
+    "Calendar is not configured yet. Add Tools/Dedicated_Tools/gmail_credentials.json with "
+    "Calendar API access and run a calendar task again to connect your Google account."
 )
 
 GOOGLE_DEPS_MISSING = (
