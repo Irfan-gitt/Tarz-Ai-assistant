@@ -15,6 +15,8 @@ google-genai>=1.0.0
 cartesia[websockets]>=4.0.0
 moondream>=2.0.0
 tavily-python>=0.8.0
+openpyxl>=3.1.0
+Send2Trash>=1.8.2
 
 # Environment, data, and web tools
 python-dotenv>=1.0.0
