@@ -26,11 +26,12 @@ from config_settings.config import (
     require_core_chat_provider,
 )
 from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
+from Prompts.behave_prompt import BEHAVIOUR_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool, tool
 
-from Tools.gmail import send_email, read_emails, search_emails
+from Tools.Dedicated_Tools.gmail import send_email, read_emails, search_emails, check_job_updates
 from Tools.calendar_tool import create_event, list_events, delete_event
 from Tools.real_time_data import rt_data
 from Tools.Dedicated_Tools.spotify_gui import spotify_play_playlist, spotify_search_and_play
@@ -61,30 +62,16 @@ os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "false")
 
 VOICE_MODE = False  # True = wake word + microphone + speaker, False = type in the terminal
 WINDOW = 8  # how many recent messages every node sees
+PRINT_OUTPUT = True
 load_dotenv()
 
 guard = Guardrails(ask=jev_ask)
 session_map: dict[str, str] = {}
 
-# NEW: scheduler plumbing
+# scheduler plumbing
 graph_lock = threading.Lock()   # a user turn and a scheduled turn must never overlap
 _local = threading.local()      # _local.unattended = True while a scheduled job runs
 GRAPH = None
-_PROGRESS_HOOK = None
-
-
-def set_progress_hook(hook=None):
-    """Register a thread-safe UI callback for agent plan/tool progress."""
-    global _PROGRESS_HOOK
-    _PROGRESS_HOOK = hook
-
-
-def _emit_progress(event: dict):
-    if _PROGRESS_HOOK is not None:
-        try:
-            _PROGRESS_HOOK(dict(event))
-        except Exception as exc:
-            print(f"[ui] progress update failed: {exc}")
 
 
 def _unattended() -> bool:
@@ -96,26 +83,56 @@ def _approved() -> bool:
     return _unattended() and getattr(_local, "approved", False)
 
 
+# ---------------- UI HOOKS (one registry) ----------------
+_hooks = {"ask": None, "confirm": None, "progress": None}
+
+
+def set_ui_hooks(ask=None, confirm=None):
+    """Route questions and confirmations to a desktop UI when one is present."""
+    _hooks["ask"], _hooks["confirm"] = ask, confirm
+
+
+def set_progress_hook(hook=None):
+    """Register a thread-safe UI callback for agent plan/tool progress."""
+    _hooks["progress"] = hook
+
+
+def _emit_progress(event: dict):
+    hook = _hooks["progress"]
+    if hook is not None:
+        try:
+            hook(dict(event))
+        except Exception as exc:
+            print(f"[ui] progress update failed: {exc}")
+
+
 # ---------------- STATE ----------------
+# A step's output is one dict: {"text": str, "ok": bool, "data": str}
+#   text = what the user hears, ok = did it work, data = raw tool data handed to later steps
 class State(TypedDict, total=False):
     messages: Annotated[list, add_messages]
     user_text: str
     blocked: bool
     memory_ctx: str
-    followup_ids: list
     followups: list
     followup_shown_ids: list
-    handoff_data: str
-    handoffs: list
     plan: list
     step_idx: int
     route: str
     task: str
-    results: list
-    last_result: str
-    last_ok: bool
+    results: list     # finished steps (dicts as above)
+    last: dict        # step that just finished
     final: str        # masked reply: memory reads this
     spoken: str       # real values: screen and voice read this
+
+
+def _step(text: str, ok: bool = True, data: str = "") -> dict:
+    return {"last": {"text": text, "ok": ok, "data": data}}
+
+
+def last_user_text(state: State) -> str:
+    return next((str(m.content) for m in reversed(state.get("messages", []))
+                 if isinstance(m, HumanMessage)), "")
 
 
 # ---------------- TOOLS ----------------
@@ -125,58 +142,64 @@ def ask_user(question: str, pending: str) -> str:
     return question
 
 
-AUTONOMOUS_TOOLS = [computer_agent]
+def _as_tools(items):
+    """Plain functions become real tools, so .name and .invoke() exist everywhere."""
+    return [t if isinstance(t, BaseTool) else StructuredTool.from_function(
+        t, name=t.__name__, description=(t.__doc__ or t.__name__).strip())
+        for t in items]
 
-SINGLE_TOOLS = [
+
+AUTONOMOUS_TOOLS = _as_tools([computer_agent])
+
+SINGLE_TOOLS = _as_tools([
     click, type_text, press_key, open_app, use_shortcut, read_screen, clipboard, wait,
     volume_control, set_alarm, set_timer,
-    send_email, read_emails, search_emails,
+    send_email, read_emails, search_emails, check_job_updates,
     create_event, list_events, delete_event,
     wether_app, rt_data, translate, news_update,
     media_play_pause, media_previous_track, media_next_track,
     schedule_task, list_scheduled, cancel_scheduled,
     research_tool,
-]
+])
 
-DEDICATED_TOOLS = [
+DEDICATED_TOOLS = _as_tools([
     spotify_play_playlist, spotify_search_and_play,
     whatsapp_send_message, whatsapp_call,
     discord_send_message, discord_toggle_mute, discord_toggle_deafen,
     discord_answer_call, discord_decline_call,
     telegram_message_user,
     *FILE_TOOLS,
-]
+])
 
+# read-only info tools the chat model may call to answer with live data
+_CHAT_TOOL_NAMES = {"rt_data", "wether_app", "news_update", "translate",
+                    "list_events", "read_emails", "search_emails",
+                    "check_job_updates", "read_screen"}
+CHAT_TOOLS = [t for t in SINGLE_TOOLS if t.name in _CHAT_TOOL_NAMES]
 
-def _as_tool(t):
-    """Plain functions become real tools, so .name and .invoke() exist everywhere."""
-    if isinstance(t, BaseTool):
-        return t
-    return StructuredTool.from_function(
-        t, name=t.__name__, description=(t.__doc__ or t.__name__).strip())
+CHAT_PROMPT = (BEHAVIOUR_PROMPT + "You may call the info tools (weather, real-time data, news, translate, "
+               "calendar/email reading) when the user asks about live or personal data. "
+               "Never guess live data, call the tool. Don't call tools for plain conversation.")
 
+# route -> (tools, prompt, max tool rounds). One executor node serves all three.
+EXECUTORS = {
+    "single":     (SINGLE_TOOLS,     SINGLE_PROMPT,     5),
+    "dedicated":  (DEDICATED_TOOLS,  DEDICATED_PROMPT,  8),
+    "autonomous": (AUTONOMOUS_TOOLS, AUTONOMOUS_PROMPT, 5),
+}
 
-AUTONOMOUS_TOOLS = [_as_tool(t) for t in AUTONOMOUS_TOOLS]
-SINGLE_TOOLS = [_as_tool(t) for t in SINGLE_TOOLS]
-DEDICATED_TOOLS = [_as_tool(t) for t in DEDICATED_TOOLS]
+# tools whose raw output is passed on to later plan steps
+HANDOFF_TOOLS = {"research"}
+
 # ---------------- HUMAN IN THE LOOP (shared) ----------------
 YES = {"y", "yes", "yeah", "yep", "ok", "sure", "do it"}
-_UI_ASK_HOOK = None
-_UI_CONFIRM_HOOK = None
-PRINT_OUTPUT = True
-
-
-def set_ui_hooks(ask=None, confirm=None):
-    """Route questions and confirmations to a desktop UI when one is present."""
-    global _UI_ASK_HOOK, _UI_CONFIRM_HOOK
-    _UI_ASK_HOOK, _UI_CONFIRM_HOOK = ask, confirm
 
 
 def ask_human(question: str) -> str:
-    if _unattended():  # NEW: nobody is there to answer a scheduled job
+    if _unattended():  # nobody is there to answer a scheduled job
         return "Nobody is available to answer. Use your best judgment or stop."
-    if _UI_ASK_HOOK is not None:
-        return _UI_ASK_HOOK(question)
+    if _hooks["ask"] is not None:
+        return _hooks["ask"](question)
     if VOICE_MODE:
         speak(question)
         return live_listen()
@@ -184,13 +207,31 @@ def ask_human(question: str) -> str:
 
 
 def human_in_the_loop(question: str) -> bool:
-    if _unattended():  # NEW: nobody can answer live; named risky tools use _approved() instead
+    if _unattended():  # nobody can answer live
         return False
-    if _UI_CONFIRM_HOOK is not None:
-        return bool(_UI_CONFIRM_HOOK(question))
+    if _hooks["confirm"] is not None:
+        return bool(_hooks["confirm"](question))
     return ask_human(f"{question} (yes/no)").strip().lower() in YES
 
 
+RISKY_TOOLS = {"send_email", "delete_event", "create_event",
+               "whatsapp_send_message", "whatsapp_call",
+               "discord_send_message", "telegram_message_user"} | FILE_MANAGER_RISKY
+
+# risky tools that are safe for certain arguments (no confirmation needed)
+CONFIRM_EXEMPT = {"organize_folder": lambda args: args.get("dry_run", True)}
+
+
+def confirm_action(name: str, args: dict) -> bool:
+    """The single place that decides whether a tool call may run."""
+    if name not in RISKY_TOOLS or CONFIRM_EXEMPT.get(name, lambda a: False)(args):
+        return True
+    if _unattended():  # scheduled job -> approval was given when it was scheduled
+        return _approved()
+    return human_in_the_loop(f"Run {name} with {args}?")
+
+
+# ---------------- MESSAGE HELPERS ----------------
 def _visible_text(content) -> str:
     """Keep only readable text from provider content blocks, excluding signatures/reasoning."""
     if isinstance(content, str):
@@ -221,6 +262,13 @@ def _replayable_ai_message(message):
     return AIMessage(**kwargs)
 
 
+def _system_message(branch_prompt: str, memory_ctx: str = "") -> SystemMessage:
+    now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
+    ctx = f"{memory_ctx}\n\n" if memory_ctx else ""
+    return SystemMessage(
+        content=f"{SYSTEM}\n\n{ctx}{branch_prompt}\nCurrent date/time: {now}")
+
+
 # ---------------- GUARDRAILS (input) ----------------
 def guardrails_input(user_text: str):
     global session_map
@@ -231,90 +279,47 @@ def guardrails_input(user_text: str):
 
 def guard_in(state: State) -> dict:
     result = guardrails_input(state["user_text"])
-    reset = {"plan": [], "step_idx": 0, "results": [], "final": "", "task": "",
-             "last_ok": True, "last_result": "", "memory_ctx": "", "followup_ids": [],
-             "followups": [], "followup_shown_ids": [], "handoff_data": "", "handoffs": []}
+    reset = {"plan": [], "step_idx": 0, "results": [], "last": {}, "final": "",
+             "task": "", "memory_ctx": "", "followups": [], "followup_shown_ids": []}
     if not result.allowed:
         return {**reset, "blocked": True, "final": result.reply, "spoken": result.reply}
     return {**reset, "blocked": False, "messages": [HumanMessage(content=result.text)]}
 
 
 # ---------------- RETRIEVAL ----------------
+# Follow-ups should feel like a friend catching up, so they are only offered
+# when the user opens the conversation ("hi", "hey", "yo", "what's up"), never
+# pushed in the middle of a task or as an unprompted chat bubble.
+_GREETING = (r"(?:hi+|hey+|hello+|yo+|hiya|howdy|hola|sup|wassup|gm|gn|"
+             r"good\s+(?:morning|afternoon|evening|night))")
+_SMALLTALK = (r"(?:what'?s\s+up|whats\s+good|what'?s\s+new|how'?s\s+it\s+going|"
+              r"how\s+are\s+you(?:\s+doing)?|how\s+you\s+doin'?g?|"
+              r"how'?s\s+your\s+day|how\s+was\s+your\s+day|"
+              r"how\s+have\s+you\s+been|you\s+(?:there|up|good)|"
+              r"u\s+good|all\s+good)")
+_OPENING_RE = re.compile(
+    rf"^\s*(?:{_GREETING}|{_SMALLTALK}|well\s+bro|bro|nothing\s+much|nm)"
+    rf"(?:[\s,.!?]+(?:{_GREETING}|{_SMALLTALK}|bro|man|mate|dude|buddy|"
+    rf"tarz|there|all|everyone|guys))*[\s,.!?]*$",
+    re.I)
+
+
+def _is_opening(text: str) -> bool:
+    """True for a greeting / small-talk opener, not a task or a real question."""
+    return bool(_OPENING_RE.match(text or ""))
+
+
 def retrieval(state: State) -> dict:
     users = [m for m in state["messages"] if isinstance(m, HumanMessage)]
-    # Event reminders are checked on every turn; the UI also polls between turns.
-    # Keep their delivery deterministic in gaurdrails_output, rather than hoping
-    # the chat model notices and asks the question itself.
     ctx = build_memory_context(users, include_followups=False)
-    followups = get_due_followups(limit=1)
-    return {"memory_ctx": ctx.text,
-            "followup_ids": [item["id"] for item in followups],
-            "followups": followups}
+    # A due follow-up is appended to the reply (in gaurdrails_output) only on an
+    # opening turn, so TARZ asks it in conversation instead of interrupting.
+    followups = get_due_followups(
+        limit=1, include_asked=True) if _is_opening(last_user_text(state)) else []
+    return {"memory_ctx": ctx.text, "followups": followups}
 
 
-# ---------------- CHAT ----------------
-def chat(state: State) -> dict:
-    # read-only info tools the chat model may call to answer with live data
-    CHAT_TOOL_NAMES = {"rt_data", "wether_app", "news_update", "translate",
-                       "list_events", "read_emails", "search_emails", "read_screen"}
-    chat_tools = [t for t in SINGLE_TOOLS if t.name in CHAT_TOOL_NAMES]
-    tool_map = {t.name: t for t in chat_tools}
-
-    now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
-    ctx = state.get("memory_ctx", "")
-    sys_msg = SystemMessage(
-        content=(f"{SYSTEM}\n\n{ctx}\n\n" if ctx else f"{SYSTEM}\n\n")
-        + "You may call the info tools (weather, real-time data, news, translate, "
-          "calendar/email reading) when the user asks about live or personal data. "
-          "Never guess live data, call the tool. Don't call tools for plain conversation.\n"
-        + f"Current date/time: {now}")
-
-    local = [sys_msg, *state["messages"][-WINDOW:]]
-
-    for _ in range(3):  # max tool rounds for chat
-        check_cancel()
-        try:
-            # Chat needs natural responses, but its read-only info tools remain available.
-            # The plain model configs use a higher temperature than the tool-agent configs,
-            # so this handles conversation and tool calls in the same request path.
-            ai = get_gateway().invoke(PLAIN_LLMS, local, tools=chat_tools)
-        except AllModelsFailed:
-            return {"last_result": "All my models are down right now, try again in a bit.",
-                    "last_ok": False}
-
-        calls = getattr(ai, "tool_calls", None) or []
-        if not calls:
-            return {"last_result": _visible_text(ai.content) or "I couldn't get a text response.", "last_ok": True}
-
-        local.append(_replayable_ai_message(ai))
-        for call in calls:
-            check_cancel()
-            tool_fn = tool_map.get(call["name"])
-            if tool_fn is None:
-                result = f"Error: tool '{call['name']}' is not available in chat."
-            else:
-                try:
-                    result = tool_fn.invoke(call["args"])
-                except TaskCancelled:
-                    raise
-                except Exception as e:
-                    result = f"Error running {call['name']}: {e}"
-            local.append(ToolMessage(content=str(
-                result), tool_call_id=call["id"]))
-
-    return {"last_result": "I couldn't get that data in time, try again.", "last_ok": False}
-
-
-# ---------------- TOOL LOOP (shared by single / dedicated / autonomous) ----------------
-def _bind_and_call(messages, tools):
-    return get_gateway().invoke(TOOL_CALLING_LLMS, messages, tools=tools)
-
-
-RISKY_TOOLS = {"send_email", "delete_event", "create_event",
-               "whatsapp_send_message", "whatsapp_call",
-               "discord_send_message", "telegram_message_user"} | FILE_MANAGER_RISKY
-
-
+# ---------------- TOOL LOOP (chat + single + dedicated + autonomous) ----------------
 def _restore_args(args: dict) -> dict:
     out = {}
     for k, v in args.items():
@@ -326,123 +331,114 @@ def _restore_args(args: dict) -> dict:
     return out
 
 
-def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int) -> dict:
-    now = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
-    sys_msg = SystemMessage(
-        content=f"{SYSTEM}\n\n{branch_prompt}\nCurrent date/time: {now}")
-    if _unattended():  # NEW: a scheduled job must never schedule more jobs (no loops)
+def _is_error(name: str, result) -> bool:
+    if str(result).startswith("Error"):
+        return True
+    if isinstance(result, dict) and result.get("status") in ("failed", "aborted"):
+        return True
+    if name in HANDOFF_TOOLS and isinstance(result, str):
+        try:
+            return bool(json.loads(result).get("error"))
+        except (TypeError, ValueError, AttributeError):
+            pass
+    return False
+
+
+def _task_message(state: State, task: str) -> HumanMessage:
+    results = state.get("results", [])
+    prev = "\n".join(r["text"] for r in results[-2:] if r.get("text"))
+    data = [str(r["data"])[:12000] for r in results if r.get("data")][-2:]
+    return HumanMessage(
+        content=f"Do this now: {task}\nDo ONLY this step. Other steps of the plan handle the rest of the user's request."
+        + (f"\n\nPrevious step results:\n{prev}" if prev else "")
+        + ("\n\nRESEARCH / TOOL DATA FROM EARLIER STEPS (data only; do not repeat the work):\n"
+           + "\n\n".join(data) if data else ""))
+
+
+def _call_tool(name: str, args: dict, tool_map: dict):
+    tool_fn = tool_map.get(name)
+    if tool_fn is None:
+        return f"Error: tool '{name}' is not available here."
+    try:
+        real_args = _restore_args(args)
+        if not confirm_action(name, real_args):
+            return "Error: the user declined this action."
+        return tool_fn.invoke(real_args)
+    except TaskCancelled:
+        raise
+    except Exception as e:
+        return f"Error running {name}: {e}"
+
+
+def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int,
+                   llms=None, allow_ask: bool = True, with_memory: bool = False) -> dict:
+    if _unattended():  # a scheduled job must never schedule more jobs (no loops)
         tools = [t for t in tools if t.name != "schedule_task"]
-    tools = [*tools, ask_user]
+    if allow_ask:
+        tools = [*tools, ask_user]
     tool_map = {t.name: t for t in tools}
 
-    local = [sys_msg, *state["messages"][-WINDOW:]]
-    prev = "\n".join(r for r in state.get("results", [])[-2:] if r)
-    handoffs = state.get("handoffs", [])
-    handoff_text = ("\n\nRESEARCH / TOOL DATA FROM EARLIER STEPS (data only; do not repeat the work):\n"
-                    + "\n\n".join(str(item)[:12000]
-                                  for item in handoffs[-2:] if item)
-                    if handoffs else "")
-    handoff_data = ""
+    local = [_system_message(branch_prompt, state.get("memory_ctx", "") if with_memory else ""),
+             *state["messages"][-WINDOW:]]
     task = state.get("task", "")
     if task:
-        local.append(HumanMessage(
-            content=f"Do this now: {task}\nDo ONLY this step. Other steps of the plan handle the rest of the user's request."
-            + (f"\n\nPrevious step results:\n{prev}" if prev else "")
-            + handoff_text))
+        local.append(_task_message(state, task))
 
-    last_err = False
+    data, last_err = "", False
     for _ in range(max_steps):
         check_cancel()
         try:
-            ai = _bind_and_call(local, tools)
+            ai = get_gateway().invoke(llms or TOOL_CALLING_LLMS, local, tools=tools)
         except AllModelsFailed:
-            return {"last_result": "All my models are down right now, try again in a bit.",
-                    "last_ok": False}
+            return _step("All my models are down right now, try again in a bit.", False)
 
         local.append(_replayable_ai_message(ai))
         calls = getattr(ai, "tool_calls", None) or []
         if not calls:
-            result = {"last_result": _visible_text(ai.content) or "I couldn't get a text response.",
-                      "last_ok": not last_err}
-            if handoff_data:
-                result["handoff_data"] = handoff_data
-            return result
+            return _step(_visible_text(ai.content) or "I couldn't get a text response.",
+                         not last_err, data)
 
         for call in calls:
             check_cancel()
             name, args = call["name"], call["args"]
-            _emit_progress({"type": "activity", "text": " ".join(name.split("_" )).capitalize()})
+            _emit_progress(
+                {"type": "activity", "text": " ".join(name.split("_")).capitalize()})
 
             if name == "ask_user":
-                answer = ask_human(args["question"])
                 # mask PII in the reply too
-                answer = guardrails_input(answer).text
-                local.append(ToolMessage(content=str(
-                    answer), tool_call_id=call["id"]))
-                continue
-
-            tool_fn = tool_map.get(name)
-            if tool_fn is None:
-                result = f"Error: tool '{name}' is not available here."
+                result = guardrails_input(ask_human(args["question"])).text
             else:
-                try:
-                    real_args = _restore_args(args)
-                    needs_confirmation = name in RISKY_TOOLS and not (
-                        name == "organize_folder" and real_args.get("dry_run", True))
-                    if needs_confirmation:
-                        # NEW: scheduled job -> approval was given when it was scheduled
-                        ok = _approved() if _unattended() else human_in_the_loop(
-                            f"Run {name} with {real_args}?")
-                    else:
-                        ok = True
-                    if not ok:
-                        result = "Error: the user declined this action."
-                    else:
-                        result = tool_fn.invoke(real_args)
-                        if name == "research":
-                            handoff_data = result if isinstance(result, str) else json.dumps(
-                                result, ensure_ascii=False, default=str)
-                except TaskCancelled:
-                    raise
-                except Exception as e:
-                    result = f"Error running {name}: {e}"
-
-            last_err = (str(result).startswith("Error")
-                        or (isinstance(result, dict)
-                            and result.get("status") in ("failed", "aborted")))
-            if name == "research" and isinstance(result, str):
-                try:
-                    last_err = last_err or bool(
-                        json.loads(result).get("error"))
-                except (TypeError, ValueError):
-                    pass
+                result = _call_tool(name, args, tool_map)
+                last_err = _is_error(name, result)
+                if name in HANDOFF_TOOLS:
+                    data = result if isinstance(result, str) else json.dumps(
+                        result, ensure_ascii=False, default=str)
             local.append(ToolMessage(content=str(
                 result), tool_call_id=call["id"]))
 
-    return {"last_result": "I hit my step limit before finishing.", "last_ok": False}
+    return _step("I hit my step limit before finishing.", False)
 
 
-def single_tool(state: State) -> dict:
-    tools = SINGLE_TOOLS
+# ---------------- EXECUTION NODES ----------------
+def chat(state: State) -> dict:
+    # Conversation plus read-only info tools, on the warmer (plain) models.
+    return run_tool_agent(state, CHAT_TOOLS, CHAT_PROMPT, max_steps=3,
+                          llms=PLAIN_LLMS, allow_ask=False, with_memory=True)
+
+
+def execute(state: State) -> dict:
+    route = state["route"]
+    tools, prompt, max_steps = EXECUTORS[route]
     task = state.get("task", "")
-    # A research step may ONLY research. With GUI tools in reach it kept going and tried to do the rest of the
-    # user's request (open Excel, click, type) by itself. Later plan steps do that work.
-    if re.search(r"\bresearch\b", task, re.I) and "schedule_task" not in task:
-        tools = [t for t in SINGLE_TOOLS if t.name ==
-                 "research"] or SINGLE_TOOLS
-    return run_tool_agent(state, tools, SINGLE_PROMPT, max_steps=5)
-
-
-def tools_dedicated(state: State) -> dict:
-    return run_tool_agent(state, DEDICATED_TOOLS, DEDICATED_PROMPT, max_steps=8)
-
-
-def agent_autonomous(state: State) -> dict:
-    return run_tool_agent(state, AUTONOMOUS_TOOLS, AUTONOMOUS_PROMPT, max_steps=5)
+    # A research step may ONLY research. With GUI tools in reach it kept going and tried
+    # to do the rest of the request (open Excel, click, type). Later plan steps do that.
+    if route == "single" and re.search(r"\bresearch\b", task, re.I) and "schedule_task" not in task:
+        tools = [t for t in tools if t.name == "research"] or tools
+    return run_tool_agent(state, tools, prompt, max_steps)
 
 
 # ---------------- ORCHESTRATOR (the hub) ----------------
-ROUTES = {"chat", "single", "dedicated", "autonomous"}
+ROUTES = {"chat", *EXECUTORS}
 MAX_PLAN_STEPS = 4
 
 PLANNER_PROMPT = """You are the planner for a desktop voice assistant. Reply with ONLY a JSON array:
@@ -450,72 +446,61 @@ PLANNER_PROMPT = """You are the planner for a desktop voice assistant. Reply wit
 
 Routes:
 - chat: conversation, questions, opinions, anything needing no action. task = "".
-- single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email, calendar,
-  weather, news, translate, volume, media play/pause/next/previous, schedule/list/cancel a scheduled task,
-  or research fresh web information.
+- single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email
+  (including ALL mail and job-application replies), calendar, weather, news, translate, volume,
+  media play/pause/next/previous, schedule/list/cancel a scheduled task, or research fresh web information.
 - dedicated: actions using direct app and file tools: Spotify, WhatsApp, Telegram, Discord, File Manager.
-  Use File Manager for local file/folder operations.
 - autonomous: everything else. Anything that needs several clicks or typing, interactive work on a website
-  or in a browser, downloads, filling forms, or any job no single or dedicated tool covers. Use research
-  for web lookups and product comparisons; use the browser only when the user asks to interact with a site.
+  or in a browser, downloads, filling forms, or any job no single or dedicated tool covers.
 
 Rules:
-- SCHEDULING HAS PRIORITY OVER APP ROUTING: if the user asks to do anything later, after a delay,
-  at a future time, or on a repeating schedule, route it to SINGLE and use schedule_task. This applies
-  even when the action mentions WhatsApp, Spotify, email, or another dedicated app. Never route a
-  future action to a direct-send/play tool, and never offer to do it immediately instead.
-- Treat follow-ups such as "schedule it", "after two minutes", or a corrected time as updates to the
-  most recent unfinished scheduling request. Carry forward its action and details from conversation
-  history; ignore an earlier assistant claim that scheduling is unavailable if it conflicts with this.
-- NEVER plan low-level GUI actions (open an app, type text, press a key, click a button) as separate steps.
-  If a job needs several UI actions, it is ONE autonomous step with the whole goal as the task.
-- RESEARCH HANDOFF: when the user asks for fresh web research AND then wants a desktop/app action using those
-  findings, plan two dependent steps: first SINGLE, call research with the user's query and the exact fields
-  needed; then route the requested app work to AUTONOMOUS or DEDICATED as appropriate. Never send the computer agent to research the web.
-  If the user only asks for research/results, use one SINGLE step with research and return its answer.
-- LOCAL FILES: local listing, searching, reading, creating, copying, moving, renaming, deleting, zipping, or
-  organizing files/folders must use the dedicated File Manager tools. Do not use computer_agent for these.
-- EXCEL / SPREADSHEETS: there is no Excel tool. Creating or editing a workbook is ONE autonomous step
-  (open Excel and do the work on screen). Do not send it to File Manager and do not invent excel_* tools.
-- A task like "download X from the official website using Brave" is exactly ONE autonomous step.
-- One clear request = ONE step. Never split one app action ("play X on spotify" is ONE step).
-- Use more than one step only for truly different jobs ("set a timer, then email Sam").
-- For a future/repeating request, plan ONE single step whose task instructs the executor to call
-  schedule_task with the complete action (without time words) and the requested time/repeat. Keep the
-  time phrase exactly as the user said it. NEVER run the action now. Example:
-  "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'".
-- Before scheduling, check all details required to perform the action later. For a message this means
-  recipient AND exact message text; for music, song/playlist; for an event, title and time. If something
-  is missing, the executor must call ask_user to ask only for the missing detail, then schedule after
-  the user answers. Do not schedule an incomplete task and do not perform it immediately.
-- Scheduling a risky action triggers an approval dialog in the app while the user is present. Let the
-  scheduler tool request that approval; do not treat asking in chat as approval or claim it is scheduled
-  until the tool confirms success. If approval is declined, report that it was not scheduled.
-- Questions like "what is scheduled" or "cancel my 11 pm task" are ONE single step (list_scheduled / cancel_scheduled).
+- SCHEDULING HAS PRIORITY OVER APP ROUTING. If the user wants anything done later, after a delay, at a
+  future time, or on a repeat, plan ONE single step telling the executor to call schedule_task with the
+  complete action (no time words) and the time phrase exactly as the user said it. This applies even when
+  the action is WhatsApp, Spotify, email, etc. NEVER run the action now.
+  * If a detail needed to perform it later is missing (message: recipient AND exact text; music: song or
+    playlist; event: title and time), the executor must call ask_user for only that detail, then schedule.
+  * The scheduler tool asks for approval of risky actions. Do not treat chat as approval, and do not say
+    it is scheduled until the tool confirms. If declined, report that it was not scheduled.
+  * Follow-ups like "schedule it", "after two minutes" or a corrected time update the most recent
+    unfinished scheduling request: carry its action and details from history, and ignore any earlier
+    claim that scheduling is unavailable.
+  * "What is scheduled" / "cancel my 11 pm task" is ONE single step (list_scheduled / cancel_scheduled).
+- NEVER plan low-level GUI actions (open an app, type, press a key, click) as separate steps. A job with
+  several UI actions is ONE autonomous step with the whole goal as the task.
+- One clear request = ONE step ("play X on spotify" is one step; "download X from the official site using
+  Brave" is one autonomous step). Use more than one step only for truly different jobs ("set a timer,
+  then email Sam"). Maximum 4 steps.
+- RESEARCH: for fresh web research followed by a desktop/app action that uses the findings, plan two
+  steps: SINGLE calling research with the query and the exact fields needed, then AUTONOMOUS or DEDICATED
+  for the action. Never send the computer agent to research the web. Research only = one SINGLE step.
+- LOCAL FILES go to dedicated (File Manager tools), never to the computer agent.
+- EXCEL / SPREADSHEETS: there is no Excel tool. Creating or editing a workbook is ONE autonomous step.
+- JOB APPLICATION UPDATES are email: plan ONE single step with check_job_updates. Never send the
+  computer agent to LinkedIn, Naukri, Internshala or any job site for application status.
 - Each task must be self-contained: include names, text, times, and the browser name if the user gave one.
   Keep placeholders like <EMAIL_1> exactly as written.
 - Use the memory block to resolve things like "my usual playlist".
-- Maximum 4 steps.
 
 Examples:
 user: download spotify from the official website in brave
 [{"route": "autonomous", "task": "Download the Spotify installer from the official Spotify website using Brave"}]
+user: read all my emails
+[{"route": "single", "task": "Call read_emails with mailbox='all' and max_results=50 to list all mail"}]
+user: check my job application updates
+[{"route": "single", "task": "Call check_job_updates to find job application replies: rejections, offers, interview invites, shortlists"}]
 user: play sailor song on spotify at 11 pm
 [{"route": "single", "task": "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'"}]
 user: text Mummy on WhatsApp after 2 minutes
 [{"route": "single", "task": "Schedule a WhatsApp message to Mummy after 2 minutes. Message text is missing: ask the user for the exact text, then call schedule_task. Do not send now."}]
 user: in response to the pending request, say hey
-[{"route": "single", "task": "Schedule the previously requested WhatsApp message to Mummy with exact text 'hey' after 2 minutes. Call schedule_task; do not send now."}]
-user: schedule it for 11:32 instead
-[{"route": "single", "task": "Update the time on the most recent unfinished scheduled request to 11:32, preserve its action and supplied details, ask for any still-missing required detail, then call schedule_task. Do not perform now."}]"""
+[{"route": "single", "task": "Schedule the previously requested WhatsApp message to Mummy with exact text 'hey' after 2 minutes. Call schedule_task; do not send now."}]"""
 
 
-def _make_plan(state: State) -> list:
-    user_text = next((str(m.content) for m in reversed(state.get("messages", []))
-                      if isinstance(m, HumanMessage)), "")
-    # YouTube owns the relevant search index and playback controls. Sending
-    # "find a video and play it" through general web research adds a slow,
-    # unrelated LLM handoff and often loses the exact playable video URL.
+def _shortcut_plan(user_text: str):
+    """Deterministic pre-filter: the only regex routing. Everything else goes to the LLM planner."""
+    # YouTube owns the search index and playback controls; a web-research handoff
+    # is slow and loses the exact playable video URL.
     if (re.search(r"\byoutube\b", user_text, re.I)
             and re.search(r"\b(play|watch|start playing)\b", user_text, re.I)
             and re.search(r"\b(find|search|best|tutorial|video|song|music)\b", user_text, re.I)):
@@ -528,18 +513,28 @@ def _make_plan(state: State) -> list:
             ),
         }]
 
-    file_action = bool(re.search(
+    file_action = re.search(
         r"\b(list|show|search|find|read|create|make|copy|move|rename|delete|open|append|zip|compress|organize)\b",
-        user_text, re.I))
-    file_target = bool(re.search(
+        user_text, re.I)
+    file_target = re.search(
         r"\b(file\s*manager|filemanager|file explorer|files?|folders?|directories|directory|downloads|documents|pictures)\b",
-        user_text, re.I))
-    fresh_research = bool(re.search(
+        user_text, re.I)
+    fresh_research = re.search(
         r"\b(on amazon|search (?:the )?(?:web|online)|research|latest|current prices?|"
-        r"top\s+\d+|best\s+\d+|compare|cheapest)\b", user_text, re.I))
-    if file_action and file_target and not fresh_research and not re.search(
-            r"\b(excel|spreadsheet|workbook|\.xlsx|\.xlsm)\b", user_text, re.I):
-        return [{"route": "dedicated", "task": f"Use the dedicated File Manager tools to perform this local file task: {user_text}. Do not use GUI automation. Check paths with list_dir/search_files when needed."}]
+        r"top\s+\d+|best\s+\d+|compare|cheapest)\b", user_text, re.I)
+    spreadsheet = re.search(
+        r"\b(excel|spreadsheet|workbook|\.xlsx|\.xlsm)\b", user_text, re.I)
+    if file_action and file_target and not fresh_research and not spreadsheet:
+        return [{"route": "dedicated",
+                 "task": f"Use the dedicated File Manager tools to perform this local file task: {user_text}. "
+                         "Do not use GUI automation. Check paths with list_dir/search_files when needed."}]
+    return None
+
+
+def _make_plan(state: State) -> list:
+    plan = _shortcut_plan(last_user_text(state))
+    if plan:
+        return plan
 
     info = (f"\n\nSingle tools: {', '.join(t.name for t in SINGLE_TOOLS)}"
             f"\nDedicated tools: {', '.join(t.name for t in DEDICATED_TOOLS)}")
@@ -550,9 +545,7 @@ def _make_plan(state: State) -> list:
         raw = get_gateway().invoke(
             CLASSIFY_LLMS, [sys_msg, *state["messages"][-WINDOW:]]).content
     except Exception as exc:
-        # Never silently turn an action into chat when all planner models fail;
-        # that led TARZ to claim it could not use tools instead of reporting the
-        # actual model outage.
+        # Never silently turn an action into chat when all planner models fail.
         raise RuntimeError(
             "TARZ could not plan this request because its classification models failed. "
             "Check the provider errors above and try again."
@@ -567,8 +560,7 @@ def _make_plan(state: State) -> list:
         if isinstance(s, dict):
             route = s.get("route") if s.get("route") in ROUTES else "chat"
             plan.append({"route": route, "task": str(s.get("task") or "")})
-    # planner failed: just talk
-    plan = plan or [{"route": "chat", "task": ""}]
+    plan = plan or [{"route": "chat", "task": ""}]  # planner failed: just talk
     print("[plan] " +
           " | ".join(f"{s['route']}: {s['task'][:70]}" for s in plan))
     return plan
@@ -578,37 +570,35 @@ def orchastration(state: State) -> dict:
     plan = state.get("plan")
     if not plan:                                        # new turn
         plan, idx, results = _make_plan(state), 0, []
-        handoffs = []
     else:                                               # a branch just finished
-        results = [*state.get("results", []), state.get("last_result", "")]
-        handoffs = list(state.get("handoffs", []))
-        if state.get("handoff_data"):
-            handoffs.append(state["handoff_data"])
+        last = state.get("last") or {}
+        results = [*state.get("results", []), last]
         idx = state["step_idx"] + 1
-        # verify: failed -> stop, report it
-        if not state.get("last_ok", True):
+        if not last.get("ok", True):                    # failed -> stop, report it
             idx = len(plan)
 
     if idx >= len(plan):
-        final = "\n".join(r for r in results if r) or "Done."
+        final = "\n".join(r["text"]
+                          for r in results if r.get("text")) or "Done."
         _emit_progress({"type": "finished", "text": final})
         return {"plan": plan, "step_idx": idx, "results": results,
-                "handoffs": handoffs, "handoff_data": "",
                 "route": "end", "final": final}
 
     step = plan[idx]
-    user_text = next((str(m.content) for m in reversed(state.get("messages", []))
-                      if isinstance(m, HumanMessage)), state.get("user_text", ""))
     _emit_progress({
-        "type": "plan", "title": user_text,
+        "type": "plan", "title": last_user_text(state) or state.get("user_text", ""),
         "steps": [{"text": item["task"],
                    "status": "done" if i < idx else "run" if i == idx else "todo"}
                   for i, item in enumerate(plan)],
         "active": f"Step {idx + 1} of {len(plan)} · {step['route']}",
     })
     return {"plan": plan, "step_idx": idx, "results": results,
-            "handoffs": handoffs, "handoff_data": "",
             "route": step["route"], "task": step["task"]}
+
+
+def _route(state: State) -> str:
+    route = state["route"]
+    return route if route in ("chat", "end") else "execute"
 
 
 # ---------------- GUARDRAILS (output) ----------------
@@ -669,12 +659,11 @@ _MEMORY_SIGNAL = re.compile(
 
 def memory_extraction(state: State) -> dict:
     global _last_save
-    if state.get("blocked") or _unattended():  # NEW: scheduled runs are not conversations
+    if state.get("blocked") or _unattended():  # scheduled runs are not conversations
         return {}
 
     masked_reply = state.get("final") or ""
-    masked_user = next((m.content for m in reversed(state["messages"])
-                        if isinstance(m, HumanMessage)), "")
+    masked_user = last_user_text(state)
     if not masked_user or not masked_reply:
         return {}
 
@@ -687,7 +676,7 @@ def memory_extraction(state: State) -> dict:
     # Skip routine single-tool commands, but keep personal facts and future
     # events even when the planner also routed the turn to a tool.
     routes = {p["route"] for p in state.get("plan", [])}
-    if routes and routes == {"single"} and not has_pending_followups():
+    if routes == {"single"} and not has_pending_followups():
         if not _MEMORY_SIGNAL.search(masked_user):
             return {}
 
@@ -715,9 +704,7 @@ def build_graph():
         ("retrieval", retrieval),
         ("orchastration", orchastration),
         ("chat", chat),
-        ("single_tool", single_tool),
-        ("tools_dedicated", tools_dedicated),
-        ("agent_autonomous", agent_autonomous),
+        ("execute", execute),
         ("gaurdrails_output", gaurdrails_output),
         ("memory_extraction", memory_extraction),
         ("speak_output", speak_output),
@@ -729,14 +716,11 @@ def build_graph():
                             lambda s: "speak_output" if s["blocked"] else "retrieval",
                             ["speak_output", "retrieval"])
     g.add_edge("retrieval", "orchastration")
-    g.add_conditional_edges("orchastration", lambda s: s["route"],
-                            {"chat": "chat", "single": "single_tool",
-                             "dedicated": "tools_dedicated",
-                             "autonomous": "agent_autonomous",
+    g.add_conditional_edges("orchastration", _route,
+                            {"chat": "chat", "execute": "execute",
                              "end": "gaurdrails_output"})
-    for n in ("chat", "single_tool", "tools_dedicated", "agent_autonomous"):
-        # the loop in the diagram
-        g.add_edge(n, "orchastration")
+    for n in ("chat", "execute"):
+        g.add_edge(n, "orchastration")  # the loop in the diagram
     g.add_edge("gaurdrails_output", "memory_extraction")
     g.add_edge("memory_extraction", "speak_output")
     g.add_edge("speak_output", END)
@@ -789,7 +773,7 @@ def main():
     set_human_hooks(confirm=human_in_the_loop,
                     ask=ask_human, cancel=cancel_event)
     GRAPH = build_graph()
-    # NEW: after the graph exists, before the loop
+    # after the graph exists, before the loop
     start_scheduler(run_scheduled, confirm=human_in_the_loop)
     history: list = []
 
@@ -805,7 +789,7 @@ def main():
 
         cancel_event.clear()
         try:
-            with graph_lock:  # NEW
+            with graph_lock:
                 out = GRAPH.invoke({"user_text": text, "messages": history},
                                    {"recursion_limit": 40})
             history = out["messages"][-WINDOW:]
