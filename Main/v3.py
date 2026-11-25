@@ -25,7 +25,7 @@ from config_settings.config import (
     TOOL_CALLING_LLMS, PLAIN_LLMS, CLASSIFY_LLMS,
     require_core_chat_provider,
 )
-from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
+from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT, PLANNER_PROMPT
 from Prompts.behave_prompt import BEHAVIOUR_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -60,7 +60,7 @@ from Audio.tts import speak
 os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "false")
 os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "false")
 
-VOICE_MODE = False  # True = wake word + microphone + speaker, False = type in the terminal
+VOICE_MODE = False
 WINDOW = 8  # how many recent messages every node sees
 PRINT_OUTPUT = True
 load_dotenv()
@@ -120,6 +120,8 @@ class State(TypedDict, total=False):
     step_idx: int
     route: str
     task: str
+    tool: str
+    args: dict        # NEW: arguments the planner filled in for that tool
     results: list     # finished steps (dicts as above)
     last: dict        # step that just finished
     final: str        # masked reply: memory reads this
@@ -190,6 +192,51 @@ EXECUTORS = {
 
 # tools whose raw output is passed on to later plan steps
 HANDOFF_TOOLS = {"research"}
+
+# ---------------- DIRECT DISPATCH (NEW) ----------------
+# #2: tools whose output is already a short, speakable confirmation. After a successful
+#     call the loop returns that output instead of spending another LLM round on "done".
+RETURN_DIRECT = {"set_timer", "set_alarm", "volume_control",
+                 "media_play_pause", "media_next_track", "media_previous_track"}
+
+# #1: the planner may fill in tool + args for a single-tool step, and execute() then runs
+#     the tool with no executor LLM at all. Excluded: GUI primitives (computer_agent owns
+#     those), schedule_task (needs the ask_user / approval flow) and research (its raw
+#     output is handed to later steps and needs the LLM to summarise).
+NOT_DIRECT = {"click", "type_text", "press_key", "open_app", "use_shortcut",
+              "read_screen", "clipboard", "wait", "schedule_task", "research"}
+DIRECT_MAP = {t.name: t for t in SINGLE_TOOLS if t.name not in NOT_DIRECT}
+
+TOOL_OUT_LIMIT = 4000  # chars of raw tool output sent to the wording call
+
+WORDING_PROMPT = ("Tell the user the result of the tool call below in one or two short, "
+                  "natural sentences meant to be spoken aloud. Use ONLY the tool output. "
+                  "Do not invent details and do not call tools.")
+
+
+def _tool_schema(t) -> dict:
+    try:
+        return t.get_input_schema().model_json_schema()
+    except Exception:
+        return {"properties": dict(getattr(t, "args", {}) or {}), "required": []}
+
+
+def _args_ok(t, args: dict) -> bool:
+    """Planner args must use real parameter names and include every required one."""
+    schema = _tool_schema(t)
+    props, required = schema.get("properties", {}), schema.get("required", [])
+    return all(k in props for k in args) and all(k in args for k in required)
+
+
+def _signature(t) -> str:
+    schema = _tool_schema(t)
+    required = set(schema.get("required", []))
+    parts = [f"{k}{'' if k in required else '?'}:{v.get('type', 'any')}"
+             for k, v in schema.get("properties", {}).items()]
+    return f"{t.name}({', '.join(parts)})"
+
+
+DIRECT_SIGS = [_signature(t) for t in DIRECT_MAP.values()]
 
 # ---------------- HUMAN IN THE LOOP (shared) ----------------
 YES = {"y", "yes", "yeah", "yep", "ok", "sure", "do it"}
@@ -398,6 +445,8 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
             return _step(_visible_text(ai.content) or "I couldn't get a text response.",
                          not last_err, data)
 
+        # NEW (#2): can this round end without another LLM call?
+        all_direct, direct_texts = True, []
         for call in calls:
             check_cancel()
             name, args = call["name"], call["args"]
@@ -407,14 +456,25 @@ def run_tool_agent(state: State, tools: list, branch_prompt: str, max_steps: int
             if name == "ask_user":
                 # mask PII in the reply too
                 result = guardrails_input(ask_human(args["question"])).text
+                all_direct = False
             else:
                 result = _call_tool(name, args, tool_map)
                 last_err = _is_error(name, result)
                 if name in HANDOFF_TOOLS:
                     data = result if isinstance(result, str) else json.dumps(
                         result, ensure_ascii=False, default=str)
+                if (name in RETURN_DIRECT and not last_err
+                        and isinstance(result, str) and result.strip()):
+                    direct_texts.append(result.strip())
+                else:
+                    all_direct = False
             local.append(ToolMessage(content=str(
                 result), tool_call_id=call["id"]))
+
+        # NEW (#2): every call this round was a simple tool that succeeded, so its output
+        # is already the answer. Skip the extra "say it's done" LLM round.
+        if all_direct and direct_texts:
+            return _step("\n".join(direct_texts), True, data)
 
     return _step("I hit my step limit before finishing.", False)
 
@@ -426,7 +486,59 @@ def chat(state: State) -> dict:
                           llms=PLAIN_LLMS, allow_ask=False, with_memory=True)
 
 
+def _direct_reply(state: State, name: str, result) -> str:
+    """Turn a direct tool result into the user's reply. Simple tools return as-is;
+    data tools get ONE small wording call with no tool schemas attached."""
+    raw = result if isinstance(result, str) else json.dumps(
+        result, ensure_ascii=False, default=str)
+    raw = raw.strip()
+    if name in RETURN_DIRECT:
+        return raw or "Done."
+    try:
+        msgs = [_system_message(WORDING_PROMPT),
+                HumanMessage(content=(
+                    f"User request: {state.get('task', '')}\n\n"
+                    f"Tool {name} returned:\n{raw[:TOOL_OUT_LIMIT]}"))]
+        ai = get_gateway().invoke(PLAIN_LLMS, msgs)
+        return _visible_text(ai.content) or raw[:1000] or "Done."
+    except TaskCancelled:
+        raise
+    except Exception as exc:
+        print(f"[direct] wording call failed, returning raw output: {exc}")
+        return raw[:1000] or "Done."
+
+
+def _direct_dispatch(state: State):
+    """NEW (#1): run the planner's chosen tool with no executor LLM.
+    Returns a step dict, or None to fall back to the normal LLM executor."""
+    name, args = state.get("tool"), state.get("args")
+    if state.get("route") != "single" or not name or not isinstance(args, dict):
+        return None
+    tool_fn = DIRECT_MAP.get(name)
+    if tool_fn is None or not _args_ok(tool_fn, args):
+        print(
+            f"[direct] skipped '{name}': unknown tool or bad args, using executor")
+        return None
+
+    check_cancel()
+    _emit_progress(
+        {"type": "activity", "text": " ".join(name.split("_")).capitalize()})
+    # _call_tool still does PII restore and confirm_action, so safety is unchanged
+    result = _call_tool(name, args, DIRECT_MAP)
+
+    if str(result).startswith("Error: the user declined"):
+        return _step("Okay, I won't do that.", False)
+    if _is_error(name, result):
+        print(f"[direct] {name} failed ({str(result)[:120]}), using executor")
+        return None
+    return _step(_direct_reply(state, name, result), True)
+
+
 def execute(state: State) -> dict:
+    direct = _direct_dispatch(state)
+    if direct is not None:
+        return direct
+
     route = state["route"]
     tools, prompt, max_steps = EXECUTORS[route]
     task = state.get("task", "")
@@ -440,61 +552,6 @@ def execute(state: State) -> dict:
 # ---------------- ORCHESTRATOR (the hub) ----------------
 ROUTES = {"chat", *EXECUTORS}
 MAX_PLAN_STEPS = 4
-
-PLANNER_PROMPT = """You are the planner for a desktop voice assistant. Reply with ONLY a JSON array:
-[{"route": "chat|single|dedicated|autonomous", "task": "..."}]
-
-Routes:
-- chat: conversation, questions, opinions, anything needing no action. task = "".
-- single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email
-  (including ALL mail and job-application replies), calendar, weather, news, translate, volume,
-  media play/pause/next/previous, schedule/list/cancel a scheduled task, or research fresh web information.
-- dedicated: actions using direct app and file tools: Spotify, WhatsApp, Telegram, Discord, File Manager.
-- autonomous: everything else. Anything that needs several clicks or typing, interactive work on a website
-  or in a browser, downloads, filling forms, or any job no single or dedicated tool covers.
-
-Rules:
-- SCHEDULING HAS PRIORITY OVER APP ROUTING. If the user wants anything done later, after a delay, at a
-  future time, or on a repeat, plan ONE single step telling the executor to call schedule_task with the
-  complete action (no time words) and the time phrase exactly as the user said it. This applies even when
-  the action is WhatsApp, Spotify, email, etc. NEVER run the action now.
-  * If a detail needed to perform it later is missing (message: recipient AND exact text; music: song or
-    playlist; event: title and time), the executor must call ask_user for only that detail, then schedule.
-  * The scheduler tool asks for approval of risky actions. Do not treat chat as approval, and do not say
-    it is scheduled until the tool confirms. If declined, report that it was not scheduled.
-  * Follow-ups like "schedule it", "after two minutes" or a corrected time update the most recent
-    unfinished scheduling request: carry its action and details from history, and ignore any earlier
-    claim that scheduling is unavailable.
-  * "What is scheduled" / "cancel my 11 pm task" is ONE single step (list_scheduled / cancel_scheduled).
-- NEVER plan low-level GUI actions (open an app, type, press a key, click) as separate steps. A job with
-  several UI actions is ONE autonomous step with the whole goal as the task.
-- One clear request = ONE step ("play X on spotify" is one step; "download X from the official site using
-  Brave" is one autonomous step). Use more than one step only for truly different jobs ("set a timer,
-  then email Sam"). Maximum 4 steps.
-- RESEARCH: for fresh web research followed by a desktop/app action that uses the findings, plan two
-  steps: SINGLE calling research with the query and the exact fields needed, then AUTONOMOUS or DEDICATED
-  for the action. Never send the computer agent to research the web. Research only = one SINGLE step.
-- LOCAL FILES go to dedicated (File Manager tools), never to the computer agent.
-- EXCEL / SPREADSHEETS: there is no Excel tool. Creating or editing a workbook is ONE autonomous step.
-- JOB APPLICATION UPDATES are email: plan ONE single step with check_job_updates. Never send the
-  computer agent to LinkedIn, Naukri, Internshala or any job site for application status.
-- Each task must be self-contained: include names, text, times, and the browser name if the user gave one.
-  Keep placeholders like <EMAIL_1> exactly as written.
-- Use the memory block to resolve things like "my usual playlist".
-
-Examples:
-user: download spotify from the official website in brave
-[{"route": "autonomous", "task": "Download the Spotify installer from the official Spotify website using Brave"}]
-user: read all my emails
-[{"route": "single", "task": "Call read_emails with mailbox='all' and max_results=50 to list all mail"}]
-user: check my job application updates
-[{"route": "single", "task": "Call check_job_updates to find job application replies: rejections, offers, interview invites, shortlists"}]
-user: play sailor song on spotify at 11 pm
-[{"route": "single", "task": "Use schedule_task: task='Play Sailor Song on Spotify', when='11 pm'"}]
-user: text Mummy on WhatsApp after 2 minutes
-[{"route": "single", "task": "Schedule a WhatsApp message to Mummy after 2 minutes. Message text is missing: ask the user for the exact text, then call schedule_task. Do not send now."}]
-user: in response to the pending request, say hey
-[{"route": "single", "task": "Schedule the previously requested WhatsApp message to Mummy with exact text 'hey' after 2 minutes. Call schedule_task; do not send now."}]"""
 
 
 def _shortcut_plan(user_text: str):
@@ -536,7 +593,8 @@ def _make_plan(state: State) -> list:
     if plan:
         return plan
 
-    info = (f"\n\nSingle tools: {', '.join(t.name for t in SINGLE_TOOLS)}"
+    info = (f"\n\nDirect tools (fill tool+args for these): {'; '.join(DIRECT_SIGS)}"
+            f"\nOther single tools: {', '.join(t.name for t in SINGLE_TOOLS if t.name not in DIRECT_MAP)}"
             f"\nDedicated tools: {', '.join(t.name for t in DEDICATED_TOOLS)}")
     ctx = state.get("memory_ctx", "")
     sys_msg = SystemMessage(content=PLANNER_PROMPT +
@@ -559,10 +617,17 @@ def _make_plan(state: State) -> list:
     for s in data[:MAX_PLAN_STEPS]:
         if isinstance(s, dict):
             route = s.get("route") if s.get("route") in ROUTES else "chat"
-            plan.append({"route": route, "task": str(s.get("task") or "")})
+            entry = {"route": route, "task": str(s.get("task") or "")}
+            # NEW (#1): keep the planner's direct call, only for single steps
+            tool_name, tool_args = s.get("tool"), s.get("args")
+            if route == "single" and isinstance(tool_name, str) and isinstance(tool_args, dict):
+                entry["tool"], entry["args"] = tool_name, tool_args
+            plan.append(entry)
     plan = plan or [{"route": "chat", "task": ""}]  # planner failed: just talk
     print("[plan] " +
-          " | ".join(f"{s['route']}: {s['task'][:70]}" for s in plan))
+          " | ".join(f"{s['route']}: {s['task'][:70]}"
+                     + (f" [direct {s['tool']}]" if s.get("tool") else "")
+                     for s in plan))
     return plan
 
 
@@ -593,7 +658,8 @@ def orchastration(state: State) -> dict:
         "active": f"Step {idx + 1} of {len(plan)} · {step['route']}",
     })
     return {"plan": plan, "step_idx": idx, "results": results,
-            "route": step["route"], "task": step["task"]}
+            "route": step["route"], "task": step["task"],
+            "tool": step.get("tool"), "args": step.get("args")}
 
 
 def _route(state: State) -> str:
