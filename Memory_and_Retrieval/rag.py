@@ -144,7 +144,7 @@ def _hint(item: dict, now: datetime) -> str:
 
 
 def followup_question(item: dict) -> str:
-    """Create a short, readable one-time chat reminder from a stored event memory."""
+    """Create a short, natural question TARZ can ask about a stored event."""
     text = str(item.get("text", "")).lower()
     labels = (
         ("job interview", "your job interview"), ("interview", "your interview"),
@@ -155,10 +155,10 @@ def followup_question(item: dict) -> str:
     )
     event = next((label for word, label in labels if word in text), None)
     if event:
-        return f"Quick follow-up: how did {event} go?"
+        return f"How did {event} go?"
     when = mem._parse_time(item.get("event_at") or item.get("follow_up_at"))
     date = f" on {when:%d %b}" if when else ""
-    return f"Quick follow-up: how did the event you mentioned{date} go?"
+    return f"How did the event you mentioned{date} go?"
 
 
 def _render(core: list, relevant: list, followups: list, now: datetime) -> str:

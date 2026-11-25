@@ -101,6 +101,8 @@ DATE_ONLY_FOLLOW_UP_HOUR = 18  # event with only a date: ask that evening
 # never asked within this many days after it was due -> expired
 FOLLOW_UP_EXPIRES_DAYS = 3
 ASKED_TTL_HOURS = 36  # asked but the user never answered -> expired
+# asked but unanswered: allow a later greeting to bring it up again
+REASK_AFTER_MINUTES = 10
 FOLLOW_UP_IMPORTANCE = 4
 EXPLICIT_MEMORY_RE = re.compile(
     r"\b(remember|don't forget|do not forget|keep in mind|save this to memory)\b", re.I)
@@ -634,20 +636,31 @@ def _expire_loops(now: datetime) -> int:
     return len(expired)
 
 
-def get_due_followups(limit: int = 3) -> list[dict]:
-    """Planned events whose follow-up time has come and were not asked yet. Read-only."""
+def get_due_followups(limit: int = 3, include_asked: bool = False) -> list[dict]:
+    """Planned events whose follow-up time has come. Read-only.
+
+    include_asked also returns reminders that were asked but never answered, so
+    a later greeting can bring them up again instead of losing them after one ask.
+    """
     now = _now()
     _expire_loops(now)
+    statuses = (OPEN, ASKED) if include_asked else (OPEN,)
     with _db_lock:
-        points = _scroll_all(_loop_filter(OPEN))
+        points = [p for status in statuses
+                  for p in _scroll_all(_loop_filter(status))]
     due = []
     for p in points:
         item = _to_dict(p)
         when = _parse_time(item.get("follow_up_at"))
-        if when and when <= now:
-            item["overdue_hours"] = round(
-                (now - when).total_seconds() / 3600, 1)
-            due.append(item)
+        if not when or when > now:
+            continue
+        if item.get("follow_up_status") == ASKED:
+            asked_at = _parse_time(item.get("follow_up_asked_at"))
+            if asked_at and now - asked_at < timedelta(minutes=REASK_AFTER_MINUTES):
+                continue
+        item["overdue_hours"] = round(
+            (now - when).total_seconds() / 3600, 1)
+        due.append(item)
     due.sort(key=lambda m: (-m["importance"], m["follow_up_at"]))
     return due[:limit]
 
