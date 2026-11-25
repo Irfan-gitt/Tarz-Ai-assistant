@@ -14,9 +14,9 @@ temp/
 *.png
 
 # Secrets and local auth
-Tools/gmail_credentials.json
-gmail_credentials.json
-gmail_token.pickle
+Tools/Dedicated_Tools/gmail_credentials.json
+Tools/Dedicated_Tools/gmail_credentials.json
+Tools/Dedicated_Tools/gmail_token.pickle
 *.pickle
 
 # Runtime output and generated media
@@ -47,3 +47,4 @@ playground/
 mailmap.txt
 
 tarz_memory_qdrant/
+tarz_jobs.db
