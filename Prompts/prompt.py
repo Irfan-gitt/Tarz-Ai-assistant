@@ -226,7 +226,8 @@ Routes:
 - single: ONE tool call that finishes the job by itself: set an alarm or timer, send or read email
   (including ALL mail and job-application replies), calendar, weather, news, translate, volume,
   media play/pause/next/previous, schedule/list/cancel a scheduled task, or research fresh web information.
-- dedicated: actions using direct app and file tools: Spotify, WhatsApp, Telegram, Discord, File Manager.
+- dedicated: actions using direct app, file, and Excel tools: Spotify, WhatsApp, Telegram, Discord,
+  File Manager, and Excel workbooks.
 - autonomous: everything else. Anything that needs several clicks or typing, interactive work on a website
   or in a browser, downloads, filling forms, or any job no single or dedicated tool covers.
 
@@ -257,7 +258,9 @@ Rules:
   steps: SINGLE calling research with the query and the exact fields needed, then AUTONOMOUS or DEDICATED
   for the action. Never send the computer agent to research the web. Research only = one SINGLE step.
 - LOCAL FILES go to dedicated (File Manager tools), never to the computer agent.
-- EXCEL / SPREADSHEETS: there is no Excel tool. Creating or editing a workbook is ONE autonomous step.
+- EXCEL / SPREADSHEETS / WORKBOOKS (.xlsx, .xlsm): ONE dedicated step. The executor has direct Excel tools
+  (excel_info, excel_read, excel_write, excel_summarize, excel_create, excel_sort, and more). Put the file
+  name, sheet name, headers, and exact values in the task. Never plan GUI steps to open Excel.
 - JOB APPLICATION UPDATES are email: plan ONE single step with check_job_updates. Never send the
   computer agent to LinkedIn, Naukri, Internshala or any job site for application status.
 - Each task must be self-contained: include names, text, times, and the browser name if the user gave one.
