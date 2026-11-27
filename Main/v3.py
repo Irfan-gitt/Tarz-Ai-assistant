@@ -25,7 +25,8 @@ from config_settings.config import (
     TOOL_CALLING_LLMS, PLAIN_LLMS, CLASSIFY_LLMS,
     require_core_chat_provider,
 )
-from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT, PLANNER_PROMPT
+from Prompts.tool_prompt import SINGLE_PROMPT, DEDICATED_PROMPT, AUTONOMOUS_PROMPT
+from Prompts.prompt import PLANNER_PROMPT
 from Prompts.behave_prompt import BEHAVIOUR_PROMPT
 from Prompts.prompt import SYSTEM
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -39,6 +40,7 @@ from Tools.Dedicated_Tools.telegram_gui import telegram_message_user
 from Tools.Dedicated_Tools.whatsapp_gui import whatsapp_send_message, whatsapp_call
 from Tools.Dedicated_Tools.discord_gui import discord_send_message, discord_toggle_mute, discord_toggle_deafen, discord_answer_call, discord_decline_call
 from Tools.Dedicated_Tools.file_manager import FILE_TOOLS, RISKY as FILE_MANAGER_RISKY
+from Tools.Dedicated_Tools.excel_tool import EXCEL_TOOLS, RISKY as EXCEL_RISKY
 from Tools.scheduler import schedule_task, list_scheduled, cancel_scheduled, start as start_scheduler
 
 from Tools.Autonomous_layer.autonomous_agent import computer_agent, set_human_hooks
@@ -171,6 +173,7 @@ DEDICATED_TOOLS = _as_tools([
     discord_answer_call, discord_decline_call,
     telegram_message_user,
     *FILE_TOOLS,
+    *EXCEL_TOOLS,
 ])
 
 # read-only info tools the chat model may call to answer with live data
@@ -263,7 +266,7 @@ def human_in_the_loop(question: str) -> bool:
 
 RISKY_TOOLS = {"send_email", "delete_event", "create_event",
                "whatsapp_send_message", "whatsapp_call",
-               "discord_send_message", "telegram_message_user"} | FILE_MANAGER_RISKY
+                "discord_send_message", "telegram_message_user"} | FILE_MANAGER_RISKY | EXCEL_RISKY
 
 # risky tools that are safe for certain arguments (no confirmation needed)
 CONFIRM_EXEMPT = {"organize_folder": lambda args: args.get("dry_run", True)}
